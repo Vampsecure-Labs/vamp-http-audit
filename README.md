@@ -58,6 +58,79 @@ usage: vamp_http_audit.py [-h] [-u URL] [--file FILE]
 vamp-http-audit — HTTP Security Headers & CORS Auditor (VampSecure Labs)
 ```
 
+## Try it now — public test targets
+
+No targets of your own? These intentionally-misconfigured hosts are safe to scan:
+
+```bash
+# No HSTS → grade drops to C
+python3 vamp_http_audit.py -u https://nohsts.badssl.com
+
+# X-Frame-Options absent → clickjacking surface
+python3 vamp_http_audit.py -u https://no-x-frame-options.badssl.com
+
+# Typical modern site for comparison
+python3 vamp_http_audit.py -u https://badssl.com
+```
+
+## Quick wins — going from B to A in nginx
+
+These three directives cover the most common gap (CSP absent → HIGH):
+
+```nginx
+# nginx.conf or site vhost
+server_tokens off;   # hides nginx version from Server header
+
+add_header Content-Security-Policy
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+   img-src 'self' data: https:; frame-ancestors 'none';"
+  always;
+
+add_header Permissions-Policy
+  "geolocation=(), camera=(), microphone=()"
+  always;
+```
+
+For SPAs (React, Vue, Next.js, Svelte) the `script-src 'self'` will break inline scripts. Use a nonce-based CSP or add `'unsafe-inline'` temporarily while hardening:
+
+```nginx
+# Next.js: also suppress framework fingerprinting
+proxy_hide_header X-Powered-By;
+```
+
+> **COEP / COOP / CORP** — vamp-http-audit flags these as LOW. They are only critical for sites using `SharedArrayBuffer` or cross-origin isolation. For most sites (blogs, dashboards, SaaS UIs without WebWorkers) these findings can be safely ignored.
+
+## CI/CD Integration
+
+```yaml
+name: HTTP Security Audit
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  http-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install vamp-http-audit
+      - run: |
+          vamp-http-audit \
+            -u https://yourdomain.com \
+            -u https://api.yourdomain.com \
+            --json http-results.json \
+            --markdown http-report.md
+        # Exit 1 = HIGH findings, exit 2 = CRITICAL (open redirect, CORS+creds)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: http-audit-report
+          path: http-report.md
+```
+
 ## Examples
 
 ```bash
