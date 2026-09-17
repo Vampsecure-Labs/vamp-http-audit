@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-http-audit"
-version = "1.0.0"
+version = "1.1.0"
 description = "HTTP security headers and CORS auditor — CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy"
 readme = "README.md"
 license = { text = "MIT" }

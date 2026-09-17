@@ -101,7 +101,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-VERSION   = "1.0"
+VERSION   = "1.1.0"
 TOOL_NAME = "vamp-http-audit"
 
 console = Console()
@@ -112,7 +112,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-http-audit v1.0 · HTTP Security Headers & CORS Auditor
+  vamp-http-audit v1.1.0 · HTTP Security Headers & CORS Auditor
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -659,39 +659,112 @@ class HTTPAuditor:
                 detail="Sin control de APIs del navegador (cámara, micrófono, geolocalización, etc.)",
                 remediation=_R_PP_ABSENT, grade_cap="A-",
             ))
+        else:
+            # Parsear directivas y alertar si APIs sensibles no están restringidas
+            apis_sensibles = ["geolocation", "camera", "microphone"]
+            sin_restriccion: list[str] = []
+            pp_lower = pp.lower()
+            for api in apis_sensibles:
+                if api not in pp_lower:
+                    # La directiva no aparece — API no controlada explícitamente
+                    sin_restriccion.append(api)
+                else:
+                    # Buscar si tiene valor restrictivo: api=() o api=(self) o api=self
+                    import re as _re
+                    m = _re.search(rf'{api}\s*=\s*\(([^)]*)\)', pp_lower)
+                    if m:
+                        val = m.group(1).strip()
+                        # () o (self) son restrictivos; cualquier otra cosa es permisivo
+                        if val not in ("", "self"):
+                            sin_restriccion.append(api)
+                    elif _re.search(rf'{api}\s*=\s*\*', pp_lower):
+                        # api=* es explícitamente permisivo
+                        sin_restriccion.append(api)
+            if sin_restriccion:
+                result.findings.append(Finding(
+                    severity="LOW", category="Cabeceras HTTP",
+                    name="Permissions-Policy: APIs sensibles sin restricción explícita",
+                    detail=(
+                        f"Las siguientes APIs del navegador no están explícitamente restringidas "
+                        f"a '()' o '(self)' en Permissions-Policy: {', '.join(sin_restriccion)}. "
+                        "Cualquier script en la página podría acceder a ellas."
+                    ),
+                    remediation=_R_PP_ABSENT,
+                ))
+
+        # ── Sección: Aislamiento Cross-Origin (COEP / COOP / CORP) ─────────────
 
         # --- Cross-Origin-Embedder-Policy ---
+        # Ausente o valor distinto de 'require-corp' → MEDIUM (sin aislamiento cross-origin)
         coep = h.get("cross-origin-embedder-policy")
         if not coep:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
+                severity="MEDIUM", category="Aislamiento Cross-Origin",
                 name="COEP ausente",
-                detail="Cross-Origin-Embedder-Policy no configurada — sin aislamiento de recursos embebidos",
-                remediation=_R_COEP_ABSENT, grade_cap="A",
+                detail=(
+                    "Cross-Origin-Embedder-Policy no configurada. "
+                    "Sin esta cabecera el navegador no aísla el contexto de navegación, "
+                    "impidiendo el uso seguro de SharedArrayBuffer y dificultando "
+                    "la mitigación de ataques Spectre cross-origin."
+                ),
+                remediation=_R_COEP_ABSENT, grade_cap="B",
+            ))
+        elif coep.lower() not in ("require-corp", "credentialless"):
+            result.findings.append(Finding(
+                severity="MEDIUM", category="Aislamiento Cross-Origin",
+                name=f"COEP con valor no restrictivo: {coep!r}",
+                detail=(
+                    f"Cross-Origin-Embedder-Policy está configurada con valor '{coep}', "
+                    "que no proporciona aislamiento completo. "
+                    "Se recomienda 'require-corp' o 'credentialless'."
+                ),
+                remediation=_R_COEP_ABSENT, grade_cap="B",
             ))
 
         # --- Cross-Origin-Opener-Policy ---
+        # Ausente o valor distinto de 'same-origin' → MEDIUM
         coop = h.get("cross-origin-opener-policy")
         if not coop:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
+                severity="MEDIUM", category="Aislamiento Cross-Origin",
                 name="COOP ausente",
-                detail="Cross-Origin-Opener-Policy no configurada — sin aislamiento del grupo de contexto",
-                remediation=_R_COOP_ABSENT, grade_cap="A",
+                detail=(
+                    "Cross-Origin-Opener-Policy no configurada. "
+                    "Sin esta cabecera la página comparte grupo de contexto de navegación "
+                    "con ventanas de otros orígenes, facilitando ataques Spectre y "
+                    "el robo de información mediante canales de tiempo."
+                ),
+                remediation=_R_COOP_ABSENT, grade_cap="B",
+            ))
+        elif "same-origin" not in coop.lower():
+            result.findings.append(Finding(
+                severity="MEDIUM", category="Aislamiento Cross-Origin",
+                name=f"COOP con valor no restrictivo: {coop!r}",
+                detail=(
+                    f"Cross-Origin-Opener-Policy está configurada con valor '{coop}', "
+                    "que no proporciona aislamiento completo del grupo de contexto. "
+                    "Se recomienda 'same-origin'."
+                ),
+                remediation=_R_COOP_ABSENT, grade_cap="B",
             ))
 
         # --- Cross-Origin-Resource-Policy ---
+        # Ausente → LOW
         corp = h.get("cross-origin-resource-policy")
         if not corp:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
+                severity="LOW", category="Aislamiento Cross-Origin",
                 name="CORP ausente",
-                detail="Cross-Origin-Resource-Policy no configurada — recursos incluibles por cualquier origen",
+                detail=(
+                    "Cross-Origin-Resource-Policy no configurada. "
+                    "Cualquier origen puede incluir estos recursos (imágenes, scripts, etc.) "
+                    "en su contexto, facilitando ataques de filtración de datos cross-origin."
+                ),
                 remediation=_R_CORP_ABSENT, grade_cap="A",
             ))
         elif corp.lower() == "cross-origin":
             result.findings.append(Finding(
-                severity="INFO", category="Cabeceras HTTP",
+                severity="INFO", category="Aislamiento Cross-Origin",
                 name="CORP: cross-origin (recurso público)",
                 detail="Intencionalmente accesible desde cualquier origen",
             ))
