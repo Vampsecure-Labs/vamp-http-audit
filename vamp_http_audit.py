@@ -101,7 +101,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-VERSION   = "1.1.0"
+VERSION   = "1.2.0"
 TOOL_NAME = "vamp-http-audit"
 
 console = Console()
@@ -112,7 +112,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-http-audit v1.1.0 · HTTP Security Headers & CORS Auditor
+  vamp-http-audit v1.2.0 · HTTP Security Headers & CORS Auditor
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -478,11 +478,13 @@ class HTTPAuditor:
     # Origin ficticio para las pruebas CORS
     _CORS_TEST_ORIGIN = "https://attacker-vsl-test.vampsecurelabs-probe.invalid"
 
-    def __init__(self, timeout: int = 10, verify_ssl: bool = False) -> None:
-        self._timeout   = timeout
+    def __init__(self, timeout: int = 10, verify_ssl: bool = False, active: bool = False) -> None:
+        self._timeout    = timeout
         self._verify_ssl = verify_ssl
+        # Bandera para activar pruebas activas (IDOR, Host Header, Open Redirect avanzado)
+        self._active     = active
         # Contexto SSL sin verificación para pruebas (no usamos los datos del cert)
-        self._ssl_ctx   = ssl.create_default_context()
+        self._ssl_ctx    = ssl.create_default_context()
         self._ssl_ctx.check_hostname = False
         self._ssl_ctx.verify_mode    = ssl.CERT_NONE
 
@@ -500,6 +502,11 @@ class HTTPAuditor:
                 self._phase_info_disclosure(result)
                 self._phase_open_redirect(result)
                 self._phase_graphql(result)
+                # Pruebas activas: solo si se habilitó --active
+                if self._active:
+                    self._probe_idor(result)
+                    self._probe_host_header_injection(result)
+                    self._probe_open_redirect_active(result)
         except Exception as exc:
             result.error = str(exc)
         finally:
@@ -1124,6 +1131,195 @@ class HTTPAuditor:
                 remediation=_R_OPEN_REDIRECT, grade_cap="F",
             ))
 
+    # --------------------------------------------------------- Pruebas activas (--active)
+
+    def _probe_idor(self, result: AuditResult) -> None:
+        """
+        Prueba básica de IDOR: si la URL contiene parámetros con IDs numéricos
+        (?id=123, /user/123, /item/456), incrementa y decrementa el ID y compara
+        el tamaño de las respuestas para detectar acceso no autorizado a recursos.
+
+        Resultado:
+          · Ambas respuestas 200 con tamaño similar (±20%) → MEDIUM Posible IDOR
+          · Respuesta 403/404 → INFO Control de acceso parece aplicado
+        """
+        parsed = urllib.parse.urlparse(result.url)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+        # Buscar parámetros query string con valores numéricos (ej. ?id=123)
+        id_params = {k: v[0] for k, v in params.items() if v and v[0].isdigit()}
+
+        if not id_params:
+            # Buscar IDs numéricos en el path (ej. /user/123, /item/456)
+            path_match = re.search(r'/(\d{1,10})(?:/|$)', parsed.path)
+            if not path_match:
+                return  # No se encontraron IDs numéricos en la URL
+
+        if id_params:
+            # Probar el primer parámetro numérico encontrado
+            param_name = next(iter(id_params))
+            id_val     = int(id_params[param_name])
+            responses  = {}
+
+            for delta in (-1, 1):
+                new_id = id_val + delta
+                if new_id < 0:
+                    continue
+                new_params  = dict(params)
+                new_params[param_name] = [str(new_id)]
+                new_query   = urllib.parse.urlencode(new_params, doseq=True)
+                probe_url   = urllib.parse.urlunparse((
+                    parsed.scheme, parsed.netloc, parsed.path,
+                    parsed.params, new_query, ""
+                ))
+                try:
+                    status, _, body = self._fetch(probe_url, follow_redirects=True)
+                    if status == 200:
+                        responses[delta] = len(body)
+                    elif status in (403, 404):
+                        result.findings.append(Finding(
+                            severity="INFO", category="Pruebas Activas",
+                            name=f"IDOR: control de acceso activo para '{param_name}'",
+                            detail=(
+                                f"ID adyacente {new_id} devolvió HTTP {status} "
+                                "— el servidor rechaza IDs no autorizados."
+                            ),
+                        ))
+                        return
+                except Exception:
+                    pass
+
+            if len(responses) == 2:
+                size_a, size_b = list(responses.values())
+                if size_a > 0 and size_b > 0:
+                    # Calcular ratio de tamaño; ratio ≤ 1.25 implica ±20% de variación
+                    ratio = max(size_a, size_b) / max(min(size_a, size_b), 1)
+                    if ratio <= 1.25:
+                        result.findings.append(Finding(
+                            severity="MEDIUM", category="Pruebas Activas",
+                            name=f"Posible IDOR — parámetro '{param_name}'",
+                            detail=(
+                                f"Los IDs adyacentes ({id_val - 1} y {id_val + 1}) devuelven "
+                                f"HTTP 200 con tamaños similares ({size_a} y {size_b} bytes, "
+                                f"ratio {ratio:.2f}). Podría indicar acceso no autorizado "
+                                "a recursos de otros usuarios (IDOR / BOLA)."
+                            ),
+                            remediation=(
+                                "Verificar que el acceso a cada recurso exige autorización "
+                                "del propietario. Implementar controles a nivel de objeto. "
+                                "Usar UUIDs en lugar de IDs secuenciales para dificultar la enumeración. "
+                                "Ref: OWASP API Security — BOLA (API1:2023)"
+                            ),
+                            grade_cap="B",
+                        ))
+
+    def _probe_host_header_injection(self, result: AuditResult) -> None:
+        """
+        Prueba Host Header Injection enviando una cabecera Host manipulada
+        y verificando si el valor manipulado aparece reflejado en la respuesta
+        (cuerpo o cabecera Location).
+
+        Resultado:
+          · Valor reflejado en respuesta  → HIGH Host Header Injection confirmado
+          · HTTP 400/421                  → INFO Servidor rechaza Host manipulado
+        """
+        evil_host = "evil.attacker-vsl-probe.invalid"
+        try:
+            status, hdrs, body = self._fetch(
+                result.url,
+                extra_headers={"Host": evil_host},
+                follow_redirects=False,
+            )
+            body_str = body.decode(errors="replace")
+            location = hdrs.get("location", "")
+
+            if evil_host in body_str or evil_host in location:
+                result.findings.append(Finding(
+                    severity="HIGH", category="Pruebas Activas",
+                    name="Host Header Injection — respuesta refleja el header Host manipulado",
+                    detail=(
+                        f"El servidor refleja el valor de la cabecera Host manipulada "
+                        f"('{evil_host}') en el cuerpo o en la cabecera Location. "
+                        "Esto puede facilitar password reset poisoning, cache poisoning "
+                        "o generación de URLs maliciosas en correos electrónicos."
+                    ),
+                    remediation=(
+                        "Validar la cabecera Host contra una lista blanca de hosts permitidos. "
+                        "No usar el valor del header Host en redirecciones ni en enlaces generados. "
+                        "Configurar el servidor web para rechazar cabeceras Host no reconocidas. "
+                        "nginx: server_name_in_redirect off; + lista explícita de server_name."
+                    ),
+                    grade_cap="B",
+                ))
+            elif status in (400, 421):
+                result.findings.append(Finding(
+                    severity="INFO", category="Pruebas Activas",
+                    name="Host Header: servidor rechaza Host manipulado",
+                    detail=(
+                        f"El servidor devolvió HTTP {status} ante una cabecera Host inválida "
+                        "— protección activa contra Host Header Injection."
+                    ),
+                ))
+        except Exception:
+            pass
+
+    def _probe_open_redirect_active(self, result: AuditResult) -> None:
+        """
+        Prueba Open Redirect activo: solo actúa si la URL ya contiene parámetros
+        de tipo redirect=, url=, next=, returnUrl=, goto=, etc.
+
+        Si existen, los reemplaza con una URL externa controlada y verifica si
+        el Location header la refleja.
+
+        Resultado:
+          · Location apunta a dominio externo → HIGH Open Redirect confirmado
+        """
+        REDIRECT_PARAMS_ACTIVE = [
+            "redirect", "url", "next", "returnUrl", "goto", "return_url",
+            "redirect_uri", "redirect_url", "destination", "redir", "target",
+        ]
+        evil_url  = "https://evil.example.com"
+        parsed    = urllib.parse.urlparse(result.url)
+        params_qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+        # Solo probar si la URL ya incluye algún parámetro de redirección
+        params_lower_map = {k.lower(): k for k in params_qs}
+        found_params = [
+            params_lower_map[p.lower()]
+            for p in REDIRECT_PARAMS_ACTIVE
+            if p.lower() in params_lower_map
+        ]
+
+        if not found_params:
+            return  # No hay parámetros de redirección en la URL — no procede
+
+        for param in found_params:
+            new_params = dict(params_qs)
+            new_params[param] = [evil_url]
+            new_query = urllib.parse.urlencode(new_params, doseq=True)
+            probe_url = urllib.parse.urlunparse((
+                parsed.scheme, parsed.netloc, parsed.path,
+                parsed.params, new_query, ""
+            ))
+            try:
+                status, hdrs, _ = self._fetch(probe_url, follow_redirects=False)
+                if status in (301, 302, 303, 307, 308):
+                    location = hdrs.get("location", "")
+                    if evil_url in location or "evil.example.com" in location:
+                        result.findings.append(Finding(
+                            severity="HIGH", category="Pruebas Activas",
+                            name=f"Open Redirect confirmado — parámetro '{param}'",
+                            detail=(
+                                f"El parámetro '{param}' redirige a una URL externa sin validación. "
+                                f"Location devuelto: {location[:120]}"
+                            ),
+                            remediation=_R_OPEN_REDIRECT,
+                            grade_cap="F",
+                        ))
+                        break  # Un Open Redirect confirmado es suficiente
+            except Exception:
+                pass
+
     def _phase_graphql(self, result: AuditResult) -> None:
         """
         Detecta endpoints GraphQL y verifica si la introspección está habilitada.
@@ -1723,6 +1919,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--csv",      metavar="FILE", help="Exportar CSV (+ FILE.findings)")
     p.add_argument("--no-verify-ssl", dest="no_verify_ssl", action="store_true",
                    help="No verificar certificado TLS al hacer peticiones (útil para endpoints internos)")
+    p.add_argument("--active", action="store_true",
+                   help=(
+                       "Activar pruebas activas (IDOR, Host Header Injection, Open Redirect). "
+                       "Solo usar en entornos autorizados — pueden generar peticiones adicionales."
+                   ))
     from vampsec_report import add_report_args
     add_report_args(p)
     return p.parse_args()
@@ -1757,7 +1958,14 @@ def main() -> None:
 
     args     = _parse_args()
     urls     = _resolve_urls(args)
-    auditor  = HTTPAuditor(timeout=args.timeout, verify_ssl=not args.no_verify_ssl)
+
+    if not args.active:
+        console.print(
+            "[dim yellow]⚠  Pruebas activas desactivadas (IDOR · Host Header Injection · Open Redirect).[/]\n"
+            "[dim]   Usa [bold]--active[/] para activarlas. Solo en entornos autorizados.[/]\n"
+        )
+
+    auditor  = HTTPAuditor(timeout=args.timeout, verify_ssl=not args.no_verify_ssl, active=args.active)
     reporter = Reporter(console)
 
     console.print(f"[bold cyan]Auditando {len(urls)} URL(s)…[/]\n")
