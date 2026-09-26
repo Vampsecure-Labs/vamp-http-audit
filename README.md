@@ -1,3 +1,4 @@
+<!-- © VampSecure Studios — VampSecure Labs Security Research Division -->
 <h1 align="center">vamp-http-audit</h1>
 
 <p align="center">
@@ -30,6 +31,13 @@
 - `rich >= 13.7.0`
 
 ## Installation
+
+
+```bash
+pip install vamp-http-audit
+# o con Homebrew:
+brew install vampsecure-labs/labs/vamp-http-audit
+```
 
 ```bash
 git clone https://github.com/belky-me/vamp-http-audit.git
@@ -221,3 +229,6 @@ Use exclusively on systems you own or for which you hold explicit written author
 ---
 
 © VampSecure Studios — VampSecure Labs Security Research Division
+
+## Versión
+v1.2.0 — VampSecure Labs Security Research Division
