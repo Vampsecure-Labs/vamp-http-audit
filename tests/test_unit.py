@@ -5,23 +5,18 @@ Cubre: compute_grade, detección de cabeceras ausentes, CORS, cookies,
        divulgación de versión de servidor, CSP unsafe-inline/eval.
 """
 
-import sys
 import os
+import sys
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, AsyncMock
-
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from vamp_http_audit import (
+    GRADE_ORDER_LIST,
     AuditResult,
     Finding,
-    CookieInfo,
     compute_grade,
-    GRADE_ORDER_LIST,
 )
-
 
 # ---------------------------------------------------------------------------
 # Tests de compute_grade

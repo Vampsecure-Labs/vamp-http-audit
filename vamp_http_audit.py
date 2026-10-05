@@ -94,7 +94,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
-from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -381,7 +380,7 @@ class CookieInfo:
     value_preview: str  # Solo primeros caracteres, nunca el valor completo
     secure:       bool
     httponly:     bool
-    samesite:     Optional[str]  # Strict / Lax / None / None (ausente)
+    samesite:     str | None  # Strict / Lax / None / None (ausente)
     path:         str
     domain:       str
     host_prefix:  bool  # __Host-
@@ -409,7 +408,7 @@ class AuditResult:
     # Hallazgos
     findings:       list[Finding] = field(default_factory=list)
     grade:          str = ""
-    error:          Optional[str] = None
+    error:          str | None = None
 
     @property
     def max_severity(self) -> str:
@@ -520,9 +519,9 @@ class HTTPAuditor:
         self,
         url: str,
         method: str = "GET",
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         follow_redirects: bool = True,
-        body: Optional[bytes] = None,
+        body: bytes | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
         """
         Realiza una petición HTTP y devuelve (status_code, headers_dict, body).
@@ -809,7 +808,7 @@ class HTTPAuditor:
         # Determinar script-src efectivo (fallback a default-src)
         script_src = directives.get("script-src") or directives.get("default-src") or []
         style_src  = directives.get("style-src")  or directives.get("default-src") or []
-        all_srcs   = directives.get("default-src") or []
+        directives.get("default-src") or []
 
         # unsafe-inline
         if "'unsafe-inline'" in script_src:
@@ -1076,12 +1075,8 @@ class HTTPAuditor:
                 ))
 
         # Cabeceras de debug
-        debug_patterns = [
-            "x-debug-token", "x-debug-token-link", "x-debugkit",
-            "x-php-debug", "x-laravel-*", "x-sf-*",
-        ]
         for h_name, h_val in h.items():
-            if h_name.startswith("x-debug") or h_name.startswith("x-sf-") or "debug" in h_name:
+            if h_name.startswith(("x-debug", "x-sf-")) or "debug" in h_name:
                 result.findings.append(Finding(
                     severity="MEDIUM", category="Información",
                     name=f"Cabecera de debug expuesta: {h_name}: {h_val[:80]}",
@@ -1334,7 +1329,6 @@ class HTTPAuditor:
           · INFO   — Endpoint responde con error gráfico (p. ej. "Not Found" JSON)
         """
         import json as _json
-        import urllib.parse as _up
 
         parsed   = urllib.parse.urlparse(result.url)
         base     = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
@@ -1503,7 +1497,7 @@ class Reporter:
 
             criticos = [f for f in result.findings if f.severity in ("CRITICAL", "HIGH") and f.remediation]
             if criticos:
-                self._c.print(f"\n  [bold cyan]Pasos de remediación prioritarios:[/]")
+                self._c.print("\n  [bold cyan]Pasos de remediación prioritarios:[/]")
                 for f in criticos:
                     self._c.print(Panel(
                         f.remediation,
@@ -1950,7 +1944,6 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
     return urls
 
 
-import concurrent.futures
 
 def main() -> None:
     """Punto de entrada principal."""

@@ -4,17 +4,15 @@ Fixtures compartidos para los tests de vamp-http-audit.
 Proporciona AuditResult simulados, cabeceras HTTP típicas y objetos Finding/CookieInfo.
 """
 
-import sys
 import os
+import sys
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from vamp_http_audit import AuditResult, Finding, CookieInfo, compute_grade
-
+from vamp_http_audit import AuditResult, CookieInfo, Finding
 
 # ---------------------------------------------------------------------------
 # Fixtures de cabeceras HTTP

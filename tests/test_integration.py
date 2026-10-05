@@ -5,20 +5,17 @@ Levanta un servidor HTTP mínimo en localhost con http.server para
 simular respuestas con y sin cabeceras de seguridad.
 """
 
-import sys
 import os
-import threading
 import socket
-import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from unittest.mock import MagicMock, patch
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from vamp_http_audit import AuditResult, Finding, CookieInfo, compute_grade, GRADE_ORDER_LIST
-
+from vamp_http_audit import GRADE_ORDER_LIST, AuditResult, Finding, compute_grade
 
 # ---------------------------------------------------------------------------
 # Servidor HTTP mock para integración
