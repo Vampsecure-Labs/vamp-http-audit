@@ -18,7 +18,6 @@ from ._models import (
     TOOL_NAME,
     GRADE_DESCRIPTION,
     HTML_GRADE_COLOR,
-    SEVERITY_COLOR,
     AuditResult,
     CookieInfo,
 )

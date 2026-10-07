@@ -23,9 +23,8 @@ from ._models import (
     SEVERITY_ORDER,
     SEVERITY_COLOR,
     AuditResult,
-    Finding,
 )
-from ._core import HTTPAuditor, compute_grade
+from ._core import HTTPAuditor
 from ._report import to_json, to_html, to_markdown, to_csv, _findings_vsl
 
 console = Console()

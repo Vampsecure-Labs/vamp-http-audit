@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from ._models import (
     VERSION,
     GRADE_ORDER_LIST,
-    SEVERITY_ORDER,
     REDIRECT_PARAMS,
     GRAPHQL_PATHS,
     UNSAFE_REFERRER_POLICIES,
