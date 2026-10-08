@@ -216,6 +216,86 @@ python3 vamp_http_audit.py --file urls.txt \
 | `1` | High-severity findings detected | Pipeline fails — review required |
 | `2` | Critical-severity findings detected | Pipeline fails — immediate action required |
 
+## Sample Output
+
+```text
+vamp-http-audit v1.2.0 · 2 targets
+─────────────────────────────────────────────────────────────────────────
+Target: https://example.com
+  Grade: C
+  [HIGH]     HEADER-001  Content-Security-Policy absent
+  [HIGH]     HEADER-002  X-Frame-Options absent — no frame-ancestors in CSP
+  [MEDIUM]   HEADER-003  Server header exposes version: nginx/1.24.0
+  [MEDIUM]   CORS-001    CORS: Access-Control-Allow-Origin reflects request origin
+             Tested origin: https://attacker.example.com → reflected ✗
+  [LOW]      HEADER-004  Referrer-Policy absent — defaults to no-referrer-when-downgrade
+  [LOW]      HEADER-005  Permissions-Policy absent
+  [LOW]      COOKIE-001  Session cookie missing SameSite attribute: SESSIONID
+
+Target: https://api.example.com
+  Grade: F
+  [CRITICAL] CORS-002    CORS wildcard + credentials: Access-Control-Allow-Origin: *
+             with Access-Control-Allow-Credentials: true — CRITICAL misconfiguration
+  [HIGH]     HEADER-006  HSTS absent — site accessible over plain HTTP
+  [HIGH]     REDIRECT-001 Open redirect confirmed: ?next=https://evil.example.com
+             redirect_uri=https://evil.example.com → 302 Location: https://evil.example.com
+  [MEDIUM]   HEADER-007  X-Content-Type-Options absent — MIME sniffing enabled
+  [MEDIUM]   HEADER-008  X-Powered-By exposes framework: Express 4.18.2
+
+┌─────────────────────────────────────┬──────────────┬──────────────┐
+│ Target                              │ Grade        │ Findings     │
+├─────────────────────────────────────┼──────────────┼──────────────┤
+│ https://example.com                 │ C            │ 1H 2M 3L     │
+│ https://api.example.com             │ F            │ 1C 2H 2M     │
+└─────────────────────────────────────┴──────────────┴──────────────┘
+1 CRITICAL · 3 HIGH · 4 MEDIUM · 3 LOW   exit 2
+```
+
+---
+
+## Why vamp-http-audit vs. SecurityHeaders.com · OWASP ZAP · Nikto
+
+| Característica | vamp-http-audit | SecurityHeaders.com | OWASP ZAP | Nikto |
+|---|---|---|---|---|
+| CORS misconfiguration (origin reflection, wildcard+creds) | ✅ | ❌ | ⚠️ parcial | ❌ |
+| Open redirect testing (16 params) | ✅ | ❌ | ✅ | ✅ |
+| CSP deep inspection (directivas, wildcards, unsafe-eval) | ✅ | ✅ | ⚠️ superficial | ❌ |
+| COEP / COOP / CORP | ✅ | ✅ | ❌ | ❌ |
+| Multi-URL en paralelo con workers | ✅ `--workers` | ❌ una URL | ❌ | ❌ |
+| Export JSON + HTML + Markdown + CSV | ✅ | ❌ solo web | ✅ | ⚠️ texto |
+| Sin tráfico externo — solo stdlib | ✅ | ❌ SaaS externo | ❌ Java+proxy | ❌ |
+| Informe de engagement cliente (VSL) | ✅ | ❌ | ❌ | ❌ |
+
+- **CORS con credenciales detectado de forma activa**: no solo comprueba la cabecera, sino que prueba la reflexión con un origen controlado y la combinación wildcard+credentials — el hallazgo más crítico que ni SecurityHeaders.com ni Nikto detectan.
+- **Sin dependencias externas**: solo `urllib` stdlib + `rich`; sin proxy Java (ZAP), sin llamada a SaaS externo (SecurityHeaders.com), sin Perl (Nikto) — corre en cualquier runner CI desde cero.
+- **Grading A+–F con lógica multi-cabecera**: el grade tiene en cuenta la interacción entre cabeceras (CSP `frame-ancestors` reemplaza X-Frame-Options; COEP/COOP se valoran conjuntamente) en lugar de sumar puntos por cabecera individual.
+- **Diseñado para pipelines**: exit code 2 en CRITICAL (CORS+creds, open redirect confirmado) bloquea el deploy; exit code 1 en HIGH; los otros tools no tienen semántica de exit code para CI/CD.
+
+---
+
+## Check Coverage
+
+| Check ID | Description | Standard | Severity |
+|----------|-------------|----------|----------|
+| HEADER-001 | Content-Security-Policy absent | OWASP ASVS v4.0 §14.4.6 / CSP Level 3 (W3C) | HIGH |
+| HEADER-002 | CSP uses `unsafe-inline` or `unsafe-eval` | OWASP ASVS v4.0 §14.4.6 / CSP Level 3 §4.2 | MEDIUM |
+| HEADER-003 | CSP uses wildcard source (`*`) in script-src or default-src | OWASP ASVS v4.0 §14.4.6 | MEDIUM |
+| HEADER-004 | X-Frame-Options absent without frame-ancestors in CSP | OWASP ASVS v4.0 §14.4.7 | HIGH |
+| HEADER-005 | HSTS absent or max-age < 1 year | OWASP ASVS v4.0 §9.3.1 / RFC 6797 | HIGH |
+| HEADER-006 | X-Content-Type-Options absent — MIME sniffing enabled | OWASP ASVS v4.0 §14.4.2 | MEDIUM |
+| HEADER-007 | Server or X-Powered-By exposes version information | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| HEADER-008 | Referrer-Policy absent or unsafe (unsafe-url, no-referrer-when-downgrade) | OWASP ASVS v4.0 §14.4.4 | LOW |
+| HEADER-009 | Permissions-Policy absent | OWASP ASVS v4.0 §14.4.5 | LOW |
+| CORS-001 | CORS reflects arbitrary request origin (active probe) | RFC 6454 / OWASP ASVS v4.0 §14.5.3 | HIGH |
+| CORS-002 | CORS wildcard + Access-Control-Allow-Credentials: true | RFC 6454 §7 / OWASP ASVS v4.0 §14.5.3 | CRITICAL |
+| CORS-003 | CORS accepts null origin (iframe sandbox bypass) | RFC 6454 §7.3 | HIGH |
+| COOKIE-001 | Session cookie missing Secure flag | OWASP ASVS v4.0 §3.4.1 | HIGH |
+| COOKIE-002 | Session cookie missing HttpOnly flag | OWASP ASVS v4.0 §3.4.2 | HIGH |
+| COOKIE-003 | Session cookie missing SameSite attribute | OWASP ASVS v4.0 §3.4.3 | MEDIUM |
+| REDIRECT-001 | Open redirect confirmed via 16 common redirect parameters | OWASP ASVS v4.0 §5.1.5 | HIGH |
+
+---
+
 ## Legal Notice
 
 Use exclusively on systems you own or for which you hold explicit written authorization from the system owner. VampSecure Studios assumes no liability for unauthorized use.
