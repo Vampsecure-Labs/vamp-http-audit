@@ -30,7 +30,7 @@
 - Open redirect testing across 16 common parameters: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - GraphQL endpoint detection and introspection availability check
 - **Network/CIDR scanning** (`--network`): async TCP discovery across entire subnets — finds all live web hosts and audits them in one command, ideal for internal network assessments
-- **PHP version detection and CVE check**: reads the `X-Powered-By` / `Server` headers and checks against known vulnerable ranges (including CVE-2026-109618, CVSS 9.8); CRITICAL finding with grade cap F when vulnerable PHP is detected
+- **PHP version detection and CVE check**: multi-layer passive + active detection engine — explicit version in `X-Powered-By`/`Server` headers, final URL `.php` extension, framework session cookies (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ total), CMS headers (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), `<meta name="generator">` extraction, and body signatures (WordPress, Drupal, Joomla, raw PHP errors…); with `--active`: phpinfo() path probing (version extraction) + CMS path confirmation (`/wp-login.php`, `/administrator/index.php`…); checks against known vulnerable ranges (including CVE-2026-109618, CVSS 9.8); CRITICAL finding with grade cap F when vulnerable PHP is detected
 - **`--php-only` mode**: suppresses non-PHP output in console — useful when scanning large internal networks to focus only on vulnerable PHP hosts
 - **PHP vulnerable summary**: JSON output includes a `php_vulnerable_summary` block listing all affected hosts, versions, and CVEs — ready to feed into `vamp-penreport`
 - Concurrent multi-URL scanning with configurable worker pool (`--workers`, default 5)
@@ -246,7 +246,7 @@ vamp-http-audit --file urls.txt \
 ### Sample Output
 
 ```text
-vamp-http-audit v1.4.0 · 2 targets
+vamp-http-audit v1.5.0 · 2 targets
 ─────────────────────────────────────────────────────────────────────────
 Target: https://example.com
   Grade: C
@@ -322,8 +322,10 @@ Target: https://api.example.com
 | COOKIE-002 | Session cookie missing HttpOnly flag | OWASP ASVS v4.0 §3.4.2 | HIGH |
 | COOKIE-003 | Session cookie missing SameSite attribute | OWASP ASVS v4.0 §3.4.3 | MEDIUM |
 | REDIRECT-001 | Open redirect confirmed via 16 common redirect parameters | OWASP ASVS v4.0 §5.1.5 | HIGH |
-| PHP-001 | PHP version detected — check against known vulnerable ranges | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
-| PHP-002 | PHP version vulnerable to CVE-2026-109618 (OOM longjmp() RCE, CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
+| PHP-001 | PHP detected (hidden version) — via cookie, header, URL or body signature | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-002 | PHP version detected (explicit) — checked against known vulnerable ranges | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-003 | phpinfo() exposed — reveals exact PHP version, env vars, loaded modules | OWASP ASVS v4.0 §14.3.3 | HIGH |
+| PHP-004 | PHP version vulnerable to CVE-2026-109618 (OOM longjmp() RCE, CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
 
 ---
 
@@ -342,6 +344,8 @@ Use exclusively on systems you own or for which you hold explicit written author
 
 | Version | Main changes |
 |---------|-------------|
+| v1.5.0 | PHP detection engine v2: 6-layer passive (URL extension, 30+ framework cookies, CMS headers, `X-Generator`, `<meta generator>`, body signatures) + active phpinfo() probing and CMS path confirmation (`--active`); `_evaluar_php_cves` extracted for reuse; `--active` PHP probing triggers `_probe_php_active` |
+| v1.4.1 | PHP fallback detection: PHPSESSID cookie + body signatures (wp-content, PHP error strings) for `expose_php = Off` setups; `_raw_body` field on `AuditResult` |
 | v1.4.0 | Network/CIDR scanning (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); PHP version detection + CVE-2026-109618 check (CRITICAL/F); `--php-only` console filter; `php_vulnerable_summary` in JSON; clearer error when `--network` finds no live hosts |
 | v1.3.0 | Active probes mode (`--active`): IDOR, Host Header Injection, Open Redirect confirmation; `--no-verify-ssl` for internal targets |
 | v1.2.1 | Bilingual README (EN/ES) |
@@ -371,7 +375,7 @@ Use exclusively on systems you own or for which you hold explicit written author
 - Pruebas de redirección abierta en 16 parámetros comunes: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - Detección de endpoints GraphQL y comprobación de disponibilidad de introspección
 - **Escaneo de red/CIDR** (`--network`): descubrimiento TCP asíncrono de subredes completas — descubre todos los hosts web activos y los audita en un solo comando, ideal para evaluaciones de red interna
-- **Detección de versión PHP y comprobación de CVEs**: lee las cabeceras `X-Powered-By` / `Server` y comprueba contra rangos de versiones vulnerables conocidos (incluido CVE-2026-109618, CVSS 9.8); hallazgo CRITICAL con cap de nota F cuando se detecta PHP vulnerable
+- **Detección PHP multi-capa (pasiva + activa)**: motor de 6 capas pasivas — versión explícita en `X-Powered-By`/`Server`, extensión `.php` en URL final, cookies de framework (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ en total), cabeceras CMS (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), extracción de `<meta name="generator">`, firmas en body (WordPress, Drupal, Joomla, errores PHP…); con `--active`: sondeo de rutas phpinfo() con extracción de versión exacta + confirmación por rutas de CMS (`/wp-login.php`, `/administrator/index.php`…); comprueba contra rangos vulnerables conocidos (incluido CVE-2026-109618, CVSS 9.8); hallazgo CRITICAL con cap de nota F cuando se detecta PHP vulnerable
 - **Modo `--php-only`**: suprime en consola la salida no relacionada con PHP — útil al escanear redes internas grandes para centrarse solo en los hosts PHP vulnerables
 - **Resumen de PHP vulnerable**: el JSON incluye un bloque `php_vulnerable_summary` listando todos los hosts afectados, versiones y CVEs — listo para importar en `vamp-penreport`
 - Escaneo multi-URL concurrente con pool de workers configurable (`--workers`, por defecto 5)
@@ -608,8 +612,10 @@ vamp-http-audit --file urls.txt \
 | COOKIE-002 | Cookie de sesión sin flag HttpOnly | OWASP ASVS v4.0 §3.4.2 | HIGH |
 | COOKIE-003 | Cookie de sesión sin atributo SameSite | OWASP ASVS v4.0 §3.4.3 | MEDIUM |
 | REDIRECT-001 | Redirección abierta confirmada en 16 parámetros comunes | OWASP ASVS v4.0 §5.1.5 | HIGH |
-| PHP-001 | Versión PHP detectada — comprobada contra rangos vulnerables conocidos | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
-| PHP-002 | Versión PHP vulnerable a CVE-2026-109618 (RCE OOM longjmp(), CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
+| PHP-001 | PHP detectado (versión oculta) — por cookie, cabecera, URL o firma en body | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-002 | PHP detectado (versión explícita) — comprobada contra rangos vulnerables conocidos | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-003 | phpinfo() expuesto — revela versión exacta, variables de entorno y módulos | OWASP ASVS v4.0 §14.3.3 | HIGH |
+| PHP-004 | Versión PHP vulnerable a CVE-2026-109618 (RCE OOM longjmp(), CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
 
 ---
 
@@ -628,6 +634,8 @@ Uso exclusivo en sistemas de tu propiedad o para los que dispongas de autorizaci
 
 | Versión | Cambios principales |
 |---------|---------------------|
+| v1.5.0 | Motor de detección PHP v2: 6 capas pasivas (extensión URL, 30+ cookies de framework, cabeceras CMS, `X-Generator`, `<meta generator>`, firmas body) + sondeo activo phpinfo() y confirmación por rutas CMS (`--active`); `_evaluar_php_cves` extraído como método independiente |
+| v1.4.1 | Detección PHP de respaldo: cookie PHPSESSID + firmas en body (wp-content, errores PHP) para setups con `expose_php = Off`; campo `_raw_body` en `AuditResult` |
 | v1.4.0 | Escaneo de red/CIDR (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); detección PHP + CVE-2026-109618 (CRITICAL/F); filtro `--php-only`; `php_vulnerable_summary` en JSON; mensaje de error mejorado cuando `--network` no descubre hosts |
 | v1.3.0 | Modo de pruebas activas (`--active`): IDOR, Host Header Injection, confirmación de Open Redirect; `--no-verify-ssl` para objetivos internos |
 | v1.2.1 | README bilingüe (EN/ES) |
