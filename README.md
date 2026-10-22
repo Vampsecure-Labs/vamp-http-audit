@@ -29,6 +29,10 @@
 - Server information disclosure detection: `Server`, `X-Powered-By`, `X-AspNet-Version`, `X-AspNetMvc-Version`, `X-Generator`, debug headers
 - Open redirect testing across 16 common parameters: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - GraphQL endpoint detection and introspection availability check
+- **Network/CIDR scanning** (`--network`): async TCP discovery across entire subnets — finds all live web hosts and audits them in one command, ideal for internal network assessments
+- **PHP version detection and CVE check**: reads the `X-Powered-By` / `Server` headers and checks against known vulnerable ranges (including CVE-2026-109618, CVSS 9.8); CRITICAL finding with grade cap F when vulnerable PHP is detected
+- **`--php-only` mode**: suppresses non-PHP output in console — useful when scanning large internal networks to focus only on vulnerable PHP hosts
+- **PHP vulnerable summary**: JSON output includes a `php_vulnerable_summary` block listing all affected hosts, versions, and CVEs — ready to feed into `vamp-penreport`
 - Concurrent multi-URL scanning with configurable worker pool (`--workers`, default 5)
 - Zero third-party dependencies — only Python stdlib (`urllib`) and `rich`
 - Export to Console, JSON, HTML (dark-theme with collapsible remediations), Markdown, and CSV
@@ -79,13 +83,13 @@ No targets of your own? These intentionally-misconfigured hosts are safe to scan
 
 ```bash
 # No HSTS → grade drops to C
-python3 vamp_http_audit.py -u https://nohsts.badssl.com
+vamp-http-audit -u https://nohsts.badssl.com
 
 # X-Frame-Options absent → clickjacking surface
-python3 vamp_http_audit.py -u https://no-x-frame-options.badssl.com
+vamp-http-audit -u https://no-x-frame-options.badssl.com
 
 # Typical modern site for comparison
-python3 vamp_http_audit.py -u https://badssl.com
+vamp-http-audit -u https://badssl.com
 ```
 
 ### Quick wins — going from B to A in nginx
@@ -150,24 +154,35 @@ jobs:
 
 ```bash
 # Audit a single URL
-python3 vamp_http_audit.py -u https://example.com
+vamp-http-audit -u https://example.com
 
 # Audit multiple URLs in one command
-python3 vamp_http_audit.py -u https://example.com -u https://api.example.com
+vamp-http-audit -u https://example.com -u https://api.example.com
 
 # Audit a list of URLs from file with 10 parallel workers
-python3 vamp_http_audit.py --file urls.txt --workers 10
+vamp-http-audit --file urls.txt --workers 10
 
 # Export results to all formats
-python3 vamp_http_audit.py -u https://example.com \
+vamp-http-audit -u https://example.com \
     --json results.json --html report.html --markdown report.md --csv report.csv
 
-# Skip TLS verification for self-signed certificates
-python3 vamp_http_audit.py -u https://internal.staging.local --no-verify-ssl
+# Skip TLS verification for self-signed certificates (internal networks)
+vamp-http-audit -u https://internal.staging.local --no-verify-ssl
+
+# Scan an entire internal subnet — discover and audit all live web hosts
+vamp-http-audit --network 192.168.1.0/24 --json internal_audit.json
+
+# Scan multiple CIDR ranges, show only PHP-vulnerable hosts in console
+vamp-http-audit --network 10.0.0.0/24 --network 172.16.0.0/24 \
+    --php-only --json php_vuln.json
+
+# Increase scan timeout and specify custom ports for slow or unusual targets
+vamp-http-audit --network 192.168.0.0/24 \
+    --scan-ports 80,443,8080,8443 --scan-timeout 3.0 --json report.json
 
 # Generate client-ready engagement report
-python3 vamp_http_audit.py --file urls.txt \
-    --client "Acme Corp" --engagement "HTTP Headers Review Q3 2026" \
+vamp-http-audit --file urls.txt \
+    --client "Acme Corp" --engagement "HTTP Headers Review Q4 2026" \
     --auditor "J. Smith" --report-html client_report.html
 ```
 
@@ -177,13 +192,19 @@ python3 vamp_http_audit.py --file urls.txt \
 |------|---------|-------------|
 | `-u / --url URL` | — | Target URL (repeatable for multiple targets) |
 | `--file FILE` | — | Text file with one URL per line |
-| `--timeout N` | 10 | Per-request timeout in seconds |
-| `--workers N` | 5 | Concurrent worker threads |
-| `--json FILE` | — | Export results to JSON |
+| `--network CIDR` | — | CIDR range to discover and audit (e.g. `192.168.1.0/24`, repeatable) |
+| `--scan-ports PORTS` | web defaults | Comma-separated TCP ports for `--network` scan (e.g. `80,443,8080`) |
+| `--scan-timeout SEC` | 1.5 | TCP connect timeout per host during network scan |
+| `--scan-concurrency N` | 200 | Simultaneous TCP connections during network scan |
+| `--php-only` | off | Show only PHP-vulnerable hosts in console output (useful with `--network`) |
+| `--timeout N` | 10 | Per-request HTTP timeout in seconds |
+| `--workers N` | 5 | Concurrent worker threads for HTTP auditing |
+| `--active` | off | Enable active probes (IDOR, Host Header Injection, Open Redirect) — authorized targets only |
+| `--no-verify-ssl` | off | Disable TLS certificate verification |
+| `--json FILE` | — | Export results to JSON (includes `php_vulnerable_summary`) |
 | `--html FILE` | — | Export dark-theme HTML report |
 | `--markdown FILE` | — | Export Markdown report |
 | `--csv FILE` | — | Export CSV summary (+ `FILE.findings` detail file) |
-| `--no-verify-ssl` | off | Disable TLS certificate verification |
 | `--client TEXT` | — | Client name for VSL engagement report |
 | `--engagement TEXT` | — | Engagement title for VSL engagement report |
 | `--auditor TEXT` | — | Auditor name for VSL engagement report |
@@ -225,7 +246,7 @@ python3 vamp_http_audit.py --file urls.txt \
 ### Sample Output
 
 ```text
-vamp-http-audit v1.2.1 · 2 targets
+vamp-http-audit v1.4.0 · 2 targets
 ─────────────────────────────────────────────────────────────────────────
 Target: https://example.com
   Grade: C
@@ -267,6 +288,8 @@ Target: https://api.example.com
 | Open redirect testing (16 params) | ✅ | ❌ | ✅ | ✅ |
 | CSP deep inspection (directives, wildcards, unsafe-eval) | ✅ | ✅ | ⚠️ shallow | ❌ |
 | COEP / COOP / CORP | ✅ | ✅ | ❌ | ❌ |
+| Network/CIDR scan — discover + audit entire subnets | ✅ `--network` | ❌ | ❌ | ⚠️ single host |
+| PHP version detection + CVE check (incl. CVE-2026-109618) | ✅ | ❌ | ❌ | ⚠️ shallow |
 | Multi-URL in parallel with workers | ✅ `--workers` | ❌ one URL | ❌ | ❌ |
 | Export JSON + HTML + Markdown + CSV | ✅ | ❌ web only | ✅ | ⚠️ text |
 | No external traffic — stdlib only | ✅ | ❌ external SaaS | ❌ Java+proxy | ❌ |
@@ -299,6 +322,8 @@ Target: https://api.example.com
 | COOKIE-002 | Session cookie missing HttpOnly flag | OWASP ASVS v4.0 §3.4.2 | HIGH |
 | COOKIE-003 | Session cookie missing SameSite attribute | OWASP ASVS v4.0 §3.4.3 | MEDIUM |
 | REDIRECT-001 | Open redirect confirmed via 16 common redirect parameters | OWASP ASVS v4.0 §5.1.5 | HIGH |
+| PHP-001 | PHP version detected — check against known vulnerable ranges | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-002 | PHP version vulnerable to CVE-2026-109618 (OOM longjmp() RCE, CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
 
 ---
 
@@ -317,6 +342,8 @@ Use exclusively on systems you own or for which you hold explicit written author
 
 | Version | Main changes |
 |---------|-------------|
+| v1.4.0 | Network/CIDR scanning (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); PHP version detection + CVE-2026-109618 check (CRITICAL/F); `--php-only` console filter; `php_vulnerable_summary` in JSON; clearer error when `--network` finds no live hosts |
+| v1.3.0 | Active probes mode (`--active`): IDOR, Host Header Injection, Open Redirect confirmation; `--no-verify-ssl` for internal targets |
 | v1.2.1 | Bilingual README (EN/ES) |
 | v1.2.0 | Initial public release — HTTP security headers, CORS, cookies, open redirect, GraphQL detection |
 
@@ -343,6 +370,10 @@ Use exclusively on systems you own or for which you hold explicit written author
 - Detección de divulgación de información del servidor: `Server`, `X-Powered-By`, `X-AspNet-Version`, `X-AspNetMvc-Version`, `X-Generator`, cabeceras de depuración
 - Pruebas de redirección abierta en 16 parámetros comunes: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - Detección de endpoints GraphQL y comprobación de disponibilidad de introspección
+- **Escaneo de red/CIDR** (`--network`): descubrimiento TCP asíncrono de subredes completas — descubre todos los hosts web activos y los audita en un solo comando, ideal para evaluaciones de red interna
+- **Detección de versión PHP y comprobación de CVEs**: lee las cabeceras `X-Powered-By` / `Server` y comprueba contra rangos de versiones vulnerables conocidos (incluido CVE-2026-109618, CVSS 9.8); hallazgo CRITICAL con cap de nota F cuando se detecta PHP vulnerable
+- **Modo `--php-only`**: suprime en consola la salida no relacionada con PHP — útil al escanear redes internas grandes para centrarse solo en los hosts PHP vulnerables
+- **Resumen de PHP vulnerable**: el JSON incluye un bloque `php_vulnerable_summary` listando todos los hosts afectados, versiones y CVEs — listo para importar en `vamp-penreport`
 - Escaneo multi-URL concurrente con pool de workers configurable (`--workers`, por defecto 5)
 - Cero dependencias de terceros — solo Python stdlib (`urllib`) y `rich`
 - Exportación a Consola, JSON, HTML (dark-theme con correcciones desplegables), Markdown y CSV
@@ -380,13 +411,13 @@ python3 vamp_http_audit.py --help
 
 ```bash
 # Sin HSTS → la calificación baja a C
-python3 vamp_http_audit.py -u https://nohsts.badssl.com
+vamp-http-audit -u https://nohsts.badssl.com
 
 # X-Frame-Options ausente → superficie de clickjacking
-python3 vamp_http_audit.py -u https://no-x-frame-options.badssl.com
+vamp-http-audit -u https://no-x-frame-options.badssl.com
 
 # Sitio moderno típico para comparación
-python3 vamp_http_audit.py -u https://badssl.com
+vamp-http-audit -u https://badssl.com
 ```
 
 ### Ganancias rápidas — pasar de B a A en nginx
@@ -444,24 +475,35 @@ jobs:
 
 ```bash
 # Auditar una sola URL
-python3 vamp_http_audit.py -u https://ejemplo.com
+vamp-http-audit -u https://ejemplo.com
 
 # Auditar múltiples URLs en un comando
-python3 vamp_http_audit.py -u https://ejemplo.com -u https://api.ejemplo.com
+vamp-http-audit -u https://ejemplo.com -u https://api.ejemplo.com
 
 # Auditar una lista de URLs desde fichero con 10 workers en paralelo
-python3 vamp_http_audit.py --file urls.txt --workers 10
+vamp-http-audit --file urls.txt --workers 10
 
 # Exportar resultados a todos los formatos
-python3 vamp_http_audit.py -u https://ejemplo.com \
+vamp-http-audit -u https://ejemplo.com \
     --json resultados.json --html informe.html --markdown informe.md --csv informe.csv
 
-# Omitir verificación TLS para certificados auto-firmados
-python3 vamp_http_audit.py -u https://interno.staging.local --no-verify-ssl
+# Omitir verificación TLS para certificados auto-firmados (redes internas)
+vamp-http-audit -u https://interno.staging.local --no-verify-ssl
+
+# Escanear una subred interna completa — descubrir y auditar todos los hosts web
+vamp-http-audit --network 192.168.1.0/24 --json auditoria_interna.json
+
+# Escanear varios rangos CIDR, mostrar solo hosts PHP vulnerables en consola
+vamp-http-audit --network 10.0.0.0/24 --network 172.16.0.0/24 \
+    --php-only --json php_vuln.json
+
+# Aumentar timeout y especificar puertos personalizados para redes lentas
+vamp-http-audit --network 192.168.0.0/24 \
+    --scan-ports 80,443,8080,8443 --scan-timeout 3.0 --json informe.json
 
 # Generar informe de engagement listo para el cliente
-python3 vamp_http_audit.py --file urls.txt \
-    --client "Acme Corp" --engagement "Revisión HTTP Headers Q3 2026" \
+vamp-http-audit --file urls.txt \
+    --client "Acme Corp" --engagement "Revisión HTTP Headers Q4 2026" \
     --auditor "J. García" --report-html informe_cliente.html
 ```
 
@@ -471,13 +513,19 @@ python3 vamp_http_audit.py --file urls.txt \
 |------|-------------|-------------|
 | `-u / --url URL` | — | URL objetivo (repetible para múltiples objetivos) |
 | `--file FILE` | — | Fichero de texto con una URL por línea |
-| `--timeout N` | 10 | Timeout por petición en segundos |
-| `--workers N` | 5 | Hilos de trabajo concurrentes |
-| `--json FILE` | — | Exportar resultados a JSON |
+| `--network CIDR` | — | Rango CIDR a descubrir y auditar (ej. `192.168.1.0/24`, repetible) |
+| `--scan-ports PORTS` | puertos web | Puertos TCP para escaneo `--network` separados por coma (ej. `80,443,8080`) |
+| `--scan-timeout SEG` | 1.5 | Timeout TCP por host durante el escaneo de red |
+| `--scan-concurrency N` | 200 | Conexiones TCP simultáneas durante el escaneo de red |
+| `--php-only` | off | Mostrar en consola solo hosts con PHP vulnerable (útil con `--network`) |
+| `--timeout N` | 10 | Timeout HTTP por petición en segundos |
+| `--workers N` | 5 | Hilos de trabajo concurrentes para la auditoría HTTP |
+| `--active` | off | Activar pruebas activas (IDOR, Host Header Injection, Open Redirect) — solo en objetivos autorizados |
+| `--no-verify-ssl` | off | Deshabilitar verificación de certificado TLS |
+| `--json FILE` | — | Exportar resultados a JSON (incluye `php_vulnerable_summary`) |
 | `--html FILE` | — | Exportar informe HTML dark-theme |
 | `--markdown FILE` | — | Exportar informe Markdown |
 | `--csv FILE` | — | Exportar resumen CSV (+ fichero `FILE.findings` con detalle) |
-| `--no-verify-ssl` | off | Deshabilitar verificación de certificado TLS |
 | `--client TEXT` | — | Nombre del cliente para el informe de engagement VSL |
 | `--engagement TEXT` | — | Título del engagement para el informe VSL |
 | `--auditor TEXT` | — | Nombre del auditor para el informe VSL |
@@ -526,6 +574,8 @@ python3 vamp_http_audit.py --file urls.txt \
 | Open redirect testing (16 params) | ✅ | ❌ | ✅ | ✅ |
 | CSP deep inspection (directivas, wildcards, unsafe-eval) | ✅ | ✅ | ⚠️ superficial | ❌ |
 | COEP / COOP / CORP | ✅ | ✅ | ❌ | ❌ |
+| Escaneo de red/CIDR — descubrir + auditar subredes | ✅ `--network` | ❌ | ❌ | ⚠️ un host |
+| Detección PHP + CVE check (incl. CVE-2026-109618) | ✅ | ❌ | ❌ | ⚠️ superficial |
 | Multi-URL en paralelo con workers | ✅ `--workers` | ❌ una URL | ❌ | ❌ |
 | Export JSON + HTML + Markdown + CSV | ✅ | ❌ solo web | ✅ | ⚠️ texto |
 | Sin tráfico externo — solo stdlib | ✅ | ❌ SaaS externo | ❌ Java+proxy | ❌ |
@@ -558,6 +608,8 @@ python3 vamp_http_audit.py --file urls.txt \
 | COOKIE-002 | Cookie de sesión sin flag HttpOnly | OWASP ASVS v4.0 §3.4.2 | HIGH |
 | COOKIE-003 | Cookie de sesión sin atributo SameSite | OWASP ASVS v4.0 §3.4.3 | MEDIUM |
 | REDIRECT-001 | Redirección abierta confirmada en 16 parámetros comunes | OWASP ASVS v4.0 §5.1.5 | HIGH |
+| PHP-001 | Versión PHP detectada — comprobada contra rangos vulnerables conocidos | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-002 | Versión PHP vulnerable a CVE-2026-109618 (RCE OOM longjmp(), CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
 
 ---
 
@@ -576,6 +628,8 @@ Uso exclusivo en sistemas de tu propiedad o para los que dispongas de autorizaci
 
 | Versión | Cambios principales |
 |---------|---------------------|
+| v1.4.0 | Escaneo de red/CIDR (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); detección PHP + CVE-2026-109618 (CRITICAL/F); filtro `--php-only`; `php_vulnerable_summary` en JSON; mensaje de error mejorado cuando `--network` no descubre hosts |
+| v1.3.0 | Modo de pruebas activas (`--active`): IDOR, Host Header Injection, confirmación de Open Redirect; `--no-verify-ssl` para objetivos internos |
 | v1.2.1 | README bilingüe (EN/ES) |
 | v1.2.0 | Lanzamiento público inicial — cabeceras de seguridad HTTP, CORS, cookies, redirección abierta, detección GraphQL |
 
