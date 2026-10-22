@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-VERSION   = "1.4.0"
+VERSION   = "1.4.1"
 TOOL_NAME = "vamp-http-audit"
 
 # ---------------------------------------------------------------------------
@@ -301,9 +301,11 @@ class AuditResult:
     open_redirect_params:  list[str] = field(default_factory=list)  # Parámetros vulnerables
     graphql_endpoints:     list[str] = field(default_factory=list)  # Endpoints GraphQL encontrados
     # Detección de versión PHP y vulnerabilidades conocidas
-    php_version:    str  = ""    # p.ej. "8.3.12" si se detecta en cabeceras
+    php_version:    str  = ""    # p.ej. "8.3.12" si se detecta, "detectado (versión oculta)" si hay PHPSESSID/firmas
     php_vulnerable: bool = False # True si la versión cae en un rango CVE conocido
     php_cves:       list[str] = field(default_factory=list)  # CVEs aplicables
+    # Body de la respuesta principal (uso interno, no se exporta en JSON)
+    _raw_body:      bytes = field(default_factory=bytes, repr=False, compare=False)
     # Hallazgos
     findings:       list[Finding] = field(default_factory=list)
     grade:          str = ""

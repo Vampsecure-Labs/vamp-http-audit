@@ -197,7 +197,7 @@ class HTTPAuditor:
     def _phase_main_request(self, result: AuditResult) -> None:
         """Petición principal y análisis de cabeceras de seguridad."""
         try:
-            status, headers, _ = self._fetch(result.url, method="GET", follow_redirects=True)
+            status, headers, body = self._fetch(result.url, method="GET", follow_redirects=True)
         except urllib.error.URLError as exc:
             raise RuntimeError(f"No se puede conectar: {exc.reason}") from exc
         except OSError as exc:
@@ -205,6 +205,7 @@ class HTTPAuditor:
 
         result.status_code = status
         result.headers     = headers
+        result._raw_body   = body
 
         h = headers  # Alias corto
 
@@ -679,22 +680,86 @@ class HTTPAuditor:
         except ValueError:
             return (0,)
 
+    # Firmas en el body que indican PHP aunque no haya cabeceras
+    _PHP_BODY_PATTERNS: tuple[bytes, ...] = (
+        b"<?php", b"phpsessid", b"wp-content/", b"wp-json",
+        b"fatal error:</b>",  b"fatal error: ",
+        b"parse error:</b>",  b"parse error: ",
+        b"warning: include", b"warning: require",
+    )
+
     def _detectar_php(self, result: AuditResult) -> None:
         """
-        Extrae la versión PHP de cabeceras HTTP y evalúa si es vulnerable
-        a los CVEs registrados en _PHP_VULN_RANGES.
-        Añade un hallazgo CRITICAL si la versión es vulnerable.
+        Extrae la versión PHP de cabeceras HTTP y evalúa si es vulnerable.
+        Si la versión no está en cabeceras, busca señales indirectas:
+          1. Cookie PHPSESSID (PHP running con expose_php = Off)
+          2. Firmas en el body (errores PHP, WordPress, <?php en respuesta)
         """
         h = result.headers
         version: str = ""
 
-        # Buscar PHP/<version> en X-Powered-By y Server
+        # 1. Versión explícita en X-Powered-By o Server
         for cabecera in ("x-powered-by", "server"):
             val = h.get(cabecera, "")
             m = re.search(r"PHP/(\d+\.\d+\.\d+)", val, re.IGNORECASE)
             if m:
                 version = m.group(1)
                 break
+
+        # 2. PHPSESSID en cookies o Set-Cookie raw (PHP con expose_php = Off)
+        if not version:
+            set_cookie_raw = h.get("_set_cookie_list", "").upper()
+            cookie_names   = [ck.name.upper() for ck in result.cookies]
+            if "PHPSESSID" in cookie_names or "PHPSESSID" in set_cookie_raw:
+                result.php_version = "detectado (versión oculta)"
+                result.findings.append(Finding(
+                    severity="MEDIUM",
+                    category="Vulnerabilidad PHP",
+                    name="PHP detectado — versión oculta (PHPSESSID)",
+                    detail=(
+                        "PHP detectado a través de la cookie PHPSESSID, pero la versión exacta no está "
+                        "expuesta en cabeceras HTTP (expose_php = Off o reverse proxy). "
+                        "Si la versión es < 8.2.35, < 8.3.36, < 8.4.27 o < 8.5.12, el servidor puede "
+                        "ser vulnerable a CVE-2026-109618 (RCE, CVSS 9.8). "
+                        "Verifica la versión con `php --version` en el servidor."
+                    ),
+                    remediation=(
+                        "Verificar la versión de PHP en el servidor:\n"
+                        "  php --version\n"
+                        "Si es vulnerable, actualizar a ≥8.2.35, ≥8.3.36, ≥8.4.27 o ≥8.5.12.\n"
+                        "Para ocultar la cookie PHPSESSID (fingerprinting), cambiar en php.ini:\n"
+                        "  session.name = SESSID"
+                    ),
+                    grade_cap="B",
+                ))
+                return
+
+        # 3. Firmas en el body (errores PHP, WordPress, etc.)
+        if not version:
+            body_lower = result._raw_body[:8192].lower() if result._raw_body else b""
+            if any(p in body_lower for p in self._PHP_BODY_PATTERNS):
+                result.php_version = "detectado (versión oculta)"
+                result.findings.append(Finding(
+                    severity="MEDIUM",
+                    category="Vulnerabilidad PHP",
+                    name="PHP detectado — versión oculta (firma en body)",
+                    detail=(
+                        "PHP detectado a través de firmas en el cuerpo de la respuesta "
+                        "(errores PHP, rutas wp-content, etc.), pero la versión exacta no está expuesta. "
+                        "Si la versión es < 8.2.35, < 8.3.36, < 8.4.27 o < 8.5.12, el servidor puede "
+                        "ser vulnerable a CVE-2026-109618 (RCE, CVSS 9.8). "
+                        "Verifica la versión con `php --version` en el servidor."
+                    ),
+                    remediation=(
+                        "Verificar la versión de PHP en el servidor:\n"
+                        "  php --version\n"
+                        "Si es vulnerable, actualizar a ≥8.2.35, ≥8.3.36, ≥8.4.27 o ≥8.5.12.\n"
+                        "Para suprimir errores PHP en el body:\n"
+                        "  display_errors = Off  (en php.ini)"
+                    ),
+                    grade_cap="B",
+                ))
+                return
 
         if not version:
             return
