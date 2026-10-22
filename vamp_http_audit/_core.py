@@ -661,9 +661,87 @@ class HTTPAuditor:
 
     # --------------------------------------------------------- Fase 5: información
 
+    # Rangos de versiones PHP vulnerables a CVEs conocidos.
+    # Formato: (desde_incl, hasta_excl, cve_id)
+    # None en desde_incl significa "cualquier versión anterior a hasta_excl".
+    _PHP_VULN_RANGES: list[tuple[str | None, str, str]] = [
+        (None,    "8.2.35", "CVE-2026-109618"),  # php2shell — todas las ramas < 8.2.35
+        ("8.3.0", "8.3.36", "CVE-2026-109618"),
+        ("8.4.0", "8.4.27", "CVE-2026-109618"),
+        ("8.5.0", "8.5.12", "CVE-2026-109618"),
+    ]
+
+    @staticmethod
+    def _vt(ver: str) -> tuple[int, ...]:
+        """Convierte '8.3.12' → (8, 3, 12) para comparaciones."""
+        try:
+            return tuple(int(x) for x in ver.split("."))
+        except ValueError:
+            return (0,)
+
+    def _detectar_php(self, result: AuditResult) -> None:
+        """
+        Extrae la versión PHP de cabeceras HTTP y evalúa si es vulnerable
+        a los CVEs registrados en _PHP_VULN_RANGES.
+        Añade un hallazgo CRITICAL si la versión es vulnerable.
+        """
+        h = result.headers
+        version: str = ""
+
+        # Buscar PHP/<version> en X-Powered-By y Server
+        for cabecera in ("x-powered-by", "server"):
+            val = h.get(cabecera, "")
+            m = re.search(r"PHP/(\d+\.\d+\.\d+)", val, re.IGNORECASE)
+            if m:
+                version = m.group(1)
+                break
+
+        if not version:
+            return
+
+        result.php_version = version
+        v = self._vt(version)
+
+        cves_aplicables: list[str] = []
+        for desde, hasta, cve in self._PHP_VULN_RANGES:
+            lo = self._vt(desde) if desde else (0,)
+            hi = self._vt(hasta)
+            if lo <= v < hi:
+                cves_aplicables.append(cve)
+
+        if cves_aplicables:
+            result.php_vulnerable = True
+            result.php_cves = cves_aplicables
+            cve_str = ", ".join(cves_aplicables)
+            result.findings.append(Finding(
+                severity="CRITICAL",
+                category="Vulnerabilidad PHP",
+                name=f"PHP/{version} — versión vulnerable ({cve_str})",
+                detail=(
+                    f"La versión PHP/{version} detectada en {result.url} está afectada por {cve_str}. "
+                    f"CVE-2026-109618 (php2shell): PHP usa longjmp() para errores OOM dejando memoria "
+                    f"de la request sin inicializar, lo que puede derivar en RCE remoto sin autenticación. "
+                    f"CVSS 3.1: 9.8 CRITICAL (AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H). "
+                    f"Versiones seguras: ≥8.2.35 · ≥8.3.36 · ≥8.4.27 · ≥8.5.12."
+                ),
+                remediation=(
+                    "Actualizar PHP inmediatamente a la versión parcheada:\n"
+                    "  PHP 8.2.x → actualizar a 8.2.35 o superior\n"
+                    "  PHP 8.3.x → actualizar a 8.3.36 o superior\n"
+                    "  PHP 8.4.x → actualizar a 8.4.27 o superior\n"
+                    "  PHP 8.5.x → actualizar a 8.5.12 o superior\n"
+                    "  Ref: https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w\n"
+                    "  Ref: https://www.wiz.io/blog/php2shell-php-rce"
+                ),
+                grade_cap="F",
+            ))
+
     def _phase_info_disclosure(self, result: AuditResult) -> None:
         """Detección de cabeceras que revelan información técnica del servidor."""
         h = result.headers
+
+        # Detección de versión PHP y CVEs conocidos (antes del resto para prioridad)
+        self._detectar_php(result)
 
         # Server con versión
         server = h.get("server", "")

@@ -40,6 +40,10 @@ def to_json(results: list[AuditResult]) -> str:
             "status_code": r.status_code, "grade": r.grade,
             "grade_description": GRADE_DESCRIPTION.get(r.grade, ""),
             "error": r.error, "max_severity": r.max_severity,
+            # Detección PHP
+            "php_version":    r.php_version or None,
+            "php_vulnerable": r.php_vulnerable,
+            "php_cves":       r.php_cves,
             "cors_origin_reflected": r.cors_origin_reflected,
             "cors_credentials": r.cors_credentials,
             "cors_null_accepted": r.cors_null_accepted,
@@ -62,10 +66,26 @@ def to_json(results: list[AuditResult]) -> str:
                 for f in r.findings
             ],
         }
+
+    resultados = [_r(r) for r in results]
+    # Resumen ejecutivo de hosts PHP vulnerables para triaje rápido
+    php_vulnerable_hosts = [
+        {"url": r["url"], "php_version": r["php_version"], "php_cves": r["php_cves"]}
+        for r in resultados
+        if r["php_vulnerable"]
+    ]
     return json.dumps(
-        {"tool": TOOL_NAME, "version": VERSION,
-         "generated": datetime.now(timezone.utc).isoformat(),
-         "results": [_r(r) for r in results]},
+        {
+            "tool": TOOL_NAME, "version": VERSION,
+            "generated": datetime.now(timezone.utc).isoformat(),
+            "php_vulnerable_summary": {
+                "total_escaneados": len(results),
+                "php_detectado":    sum(1 for r in resultados if r["php_version"]),
+                "php_vulnerables":  len(php_vulnerable_hosts),
+                "hosts_vulnerables": php_vulnerable_hosts,
+            },
+            "results": resultados,
+        },
         indent=2, ensure_ascii=False,
     )
 
