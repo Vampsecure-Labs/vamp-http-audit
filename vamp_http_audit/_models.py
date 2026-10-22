@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-VERSION   = "1.5.0"
+VERSION   = "1.5.1"
 TOOL_NAME = "vamp-http-audit"
 
 # ---------------------------------------------------------------------------

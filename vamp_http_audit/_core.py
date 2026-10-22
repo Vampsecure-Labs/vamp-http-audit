@@ -774,6 +774,51 @@ class HTTPAuditor:
         ("/typo3/",                  "TYPO3 backend"),
     )
 
+    # composer.lock: revela versión PHP exacta (platform-overrides) o restricción (platform)
+    _COMPOSER_LOCK_PATHS: tuple[str, ...] = (
+        "/composer.lock",
+        "/public/composer.lock",
+        "/app/composer.lock",
+        "/backend/composer.lock",
+        "/api/composer.lock",
+        "/src/composer.lock",
+    )
+
+    # .env: CRITICAL por sí solo; puede contener PHP_VERSION=
+    _DOTENV_PATHS: tuple[str, ...] = (
+        "/.env",
+        "/.env.local",
+        "/.env.production",
+        "/.env.prod",
+        "/.env.server",
+    )
+
+    # PHP-FPM status/ping: confirma PHP-FPM como backend
+    _FPM_PROBE_PATHS: tuple[tuple[str, str], ...] = (
+        ("/fpm-ping",        "ping"),
+        ("/fpm-status",      "status"),
+        ("/php-fpm-status",  "status"),
+        ("/php-fpm-ping",    "ping"),
+        ("/status",          "status"),   # algunos nginx lo exponen aquí
+    )
+
+    # Endpoints de debug de frameworks PHP — pueden revelar versión exacta
+    _FRAMEWORK_DEBUG_PATHS: tuple[tuple[str, str], ...] = (
+        ("/_ignition/health-check",  "Laravel Ignition"),
+        ("/telescope/api/requests",  "Laravel Telescope"),
+        ("/_profiler/",              "Symfony Profiler"),
+        ("/_wdt/",                   "Symfony WDT"),
+        ("/debug/",                  "debug endpoint"),
+        ("/_debugbar/open",          "Laravel DebugBar"),
+    )
+
+    # Versiones de WP → requisito mínimo de PHP (para correlación)
+    _WP_PHP_MIN: dict[tuple[int, int], str] = {
+        (6, 7): "7.4", (6, 6): "7.4", (6, 5): "7.4", (6, 4): "7.4",
+        (6, 3): "7.4", (6, 2): "7.4", (6, 1): "7.4", (6, 0): "7.4",
+        (5, 9): "7.4", (5, 8): "7.4", (5, 7): "7.2", (5, 6): "7.2",
+    }
+
     def _php_hallazgo_oculto(self, senal: str, remediacion_extra: str = "") -> "Finding":
         """Genera un hallazgo MEDIUM estándar para PHP detectado sin versión."""
         base_rem = (
@@ -922,7 +967,12 @@ class HTTPAuditor:
         self._evaluar_php_cves(result, version)
 
     def _evaluar_php_cves(self, result: AuditResult, version: str) -> None:
-        """Evalúa si una versión PHP concreta cae en rangos CVE conocidos y añade el hallazgo."""
+        """Evalúa si una versión PHP concreta cae en rangos CVE conocidos y añade el hallazgo.
+        Idempotente: no añade hallazgos duplicados si ya se llamó con la misma versión."""
+        # Evitar duplicados (puede ser llamado desde pasiva + activa)
+        cve_finding_name = f"PHP/{version} — versión vulnerable"
+        if any(cve_finding_name in f.name for f in result.findings):
+            return
         v = self._vt(version)
 
         cves_aplicables: list[str] = []
@@ -1176,19 +1226,49 @@ class HTTPAuditor:
 
     def _probe_php_active(self, result: AuditResult) -> None:
         """
-        Sondeo activo de PHP: solo se ejecuta con --active.
-        1. Intenta rutas de phpinfo() para extraer la versión exacta.
-        2. Si no se encuentra phpinfo, intenta rutas de CMS PHP conocidos.
-        No sobreescribe una detección pasiva ya confirmada con versión numérica.
+        Sondeo activo de PHP — orquesta 7 vectores en orden de precisión.
+        Se detiene en cuanto obtiene la versión exacta (x.y.z).
+        Siempre ejecuta composer.lock y .env aunque ya haya versión exacta
+        (son hallazgos de seguridad independientes).
         """
-        # Si ya tenemos versión exacta (detectada pasivamente), no hace falta sondear
-        if result.php_version and re.match(r"\d+\.\d+\.\d+", result.php_version):
-            return
-
         parsed = urllib.parse.urlparse(result.final_url or result.url)
         base   = f"{parsed.scheme}://{parsed.netloc}"
 
-        # 1. Rutas de phpinfo()
+        exact  = bool(result.php_version and re.match(r"\d+\.\d+\.\d+", result.php_version))
+
+        # composer.lock y .env se sondean SIEMPRE (son hallazgos propios)
+        if not self._probe_composer_lock(base, result) and not exact:
+            exact = bool(result.php_version and re.match(r"\d+\.\d+\.\d+", result.php_version))
+        self._probe_dotenv(base, result)
+        if not exact:
+            exact = bool(result.php_version and re.match(r"\d+\.\d+\.\d+", result.php_version))
+
+        if exact:
+            # Con versión exacta solo queda comprobar FPM/debug por sus hallazgos propios
+            self._probe_fpm_status(base, result)
+            self._probe_framework_debug(base, result)
+            return
+
+        # Sin versión exacta: continuar con los demás vectores
+        if self._probe_phpinfo(base, result):
+            self._probe_fpm_status(base, result)
+            self._probe_framework_debug(base, result)
+            return
+
+        self._probe_fpm_status(base, result)
+        self._probe_framework_debug(base, result)
+        self._probe_wp_version(base, result)
+
+        if not result.php_version:
+            self._probe_cms_paths(base, result)
+
+        # Fingerprinting de major version por diferencias de formato de error
+        self._probe_php_error_fingerprint(base, result)
+
+    # ── Sondeo: phpinfo() ─────────────────────────────────────────────────────
+
+    def _probe_phpinfo(self, base: str, result: AuditResult) -> bool:
+        """Sondea rutas phpinfo(). Devuelve True si obtiene versión exacta."""
         phpinfo_re = re.compile(
             rb"PHP Version\s*</td[^>]*>\s*<td[^>]*>([0-9]+\.[0-9]+\.[0-9]+)",
             re.IGNORECASE,
@@ -1199,75 +1279,465 @@ class HTTPAuditor:
                 status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
                 if status != 200 or not body:
                     continue
-                # Confirmar que es una página phpinfo real
                 body_lower = body[:32768].lower()
                 if b"phpinfo()" not in body_lower and b"php version" not in body_lower:
                     continue
-                # Intentar extraer la versión
                 m = phpinfo_re.search(body[:32768])
                 if m:
                     version = m.group(1).decode("ascii", errors="replace")
                     result.php_version = version
-                    # Evaluar CVEs con la versión encontrada
                     self._evaluar_php_cves(result, version)
-                    # Si no hay CVE añade un hallazgo informativo de exposición
-                    if not result.php_vulnerable:
-                        result.findings.append(Finding(
-                            severity="HIGH",
-                            category="Vulnerabilidad PHP",
-                            name=f"phpinfo() expuesto en {path}",
-                            detail=(
-                                f"La ruta {url_probe} devuelve phpinfo() completo (PHP {version}). "
-                                "Expone versión exacta, variables de entorno, configuración, rutas del sistema "
-                                "y módulos cargados — información muy valiosa para un atacante."
-                            ),
-                            remediation=(
-                                "Eliminar o restringir el acceso a phpinfo() en producción:\n"
-                                f"  rm {path}   (o equivalente en la docroot)\n"
-                                "  O protegerlo con autenticación básica desde nginx/apache."
-                            ),
-                            grade_cap="C",
-                        ))
-                    else:
-                        # Añadir el contexto de exposición al hallazgo CVE
-                        result.findings.append(Finding(
-                            severity="HIGH",
-                            category="Vulnerabilidad PHP",
-                            name=f"phpinfo() expuesto en {path}",
-                            detail=f"La ruta {url_probe} confirma PHP {version} y expone la configuración completa.",
-                            remediation=f"Eliminar {path} de la docroot inmediatamente.",
-                            grade_cap="C",
-                        ))
-                    return
+                    sev = "HIGH" if not result.php_vulnerable else "HIGH"
+                    result.findings.append(Finding(
+                        severity=sev,
+                        category="Vulnerabilidad PHP",
+                        name=f"phpinfo() expuesto en {path}",
+                        detail=(
+                            f"La ruta {url_probe} devuelve phpinfo() completo (PHP {version}). "
+                            "Expone versión exacta, variables de entorno, rutas del sistema "
+                            "y módulos cargados — información crítica para un atacante."
+                        ),
+                        remediation=(
+                            f"Eliminar {path} de la docroot inmediatamente.\n"
+                            "  O bloquear desde nginx:  location = {path} {{ deny all; }}"
+                        ),
+                        grade_cap="C",
+                    ))
+                    return True
                 else:
-                    # phpinfo sin versión extraíble — todavía es una exposición
-                    result.php_version = "detectado (phpinfo expuesto, versión no extraída)"
+                    result.php_version = result.php_version or "detectado (phpinfo expuesto)"
                     result.findings.append(Finding(
                         severity="HIGH",
                         category="Vulnerabilidad PHP",
                         name=f"phpinfo() expuesto en {path}",
                         detail=(
-                            f"La ruta {url_probe} devuelve phpinfo() pero no se pudo extraer la versión exacta. "
+                            f"La ruta {url_probe} devuelve phpinfo() pero la versión no se pudo extraer. "
                             "Expone configuración sensible del servidor."
                         ),
                         remediation=f"Eliminar {path} de la docroot.",
                         grade_cap="C",
                     ))
+                    return False
+            except Exception:
+                continue
+        return False
+
+    # ── Sondeo: composer.lock ─────────────────────────────────────────────────
+
+    def _probe_composer_lock(self, base: str, result: AuditResult) -> bool:
+        """
+        Sondea composer.lock. Es un hallazgo de divulgación de información independiente.
+        Devuelve True si obtiene versión PHP exacta (platform-overrides).
+        """
+        for path in self._COMPOSER_LOCK_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status != 200 or not body:
+                    continue
+                body_text = body[:131072].decode("utf-8", errors="replace").strip()
+                if not body_text.startswith("{"):
+                    continue
+                try:
+                    data = json.loads(body_text)
+                except Exception:
+                    continue
+
+                platform   = data.get("platform", {}) or {}
+                overrides  = data.get("platform-overrides", {}) or {}
+                php_req    = overrides.get("php") or platform.get("php") or ""
+
+                # Contar dependencias para el detalle del hallazgo
+                n_packages = len(data.get("packages", []))
+                n_dev      = len(data.get("packages-dev", []))
+
+                result.findings.append(Finding(
+                    severity="HIGH",
+                    category="Divulgación de información",
+                    name=f"composer.lock expuesto ({path})",
+                    detail=(
+                        f"El fichero composer.lock es público en {url_probe}. "
+                        f"Expone el árbol completo de dependencias ({n_packages} paquetes, "
+                        f"{n_dev} de desarrollo) con sus versiones exactas, "
+                        "facilitando la búsqueda dirigida de CVEs en componentes del servidor."
+                        + (f" PHP declarado: {php_req}." if php_req else "")
+                    ),
+                    remediation=(
+                        "Bloquear el acceso a composer.lock desde nginx/apache:\n"
+                        "  nginx:  location ~* composer\\.lock$ { deny all; }\n"
+                        "  apache: <Files \"composer.lock\"> Require all denied </Files>"
+                    ),
+                    grade_cap="C",
+                ))
+
+                if php_req:
+                    exact = re.match(r"^(\d+\.\d+\.\d+)$", php_req.strip())
+                    if exact:
+                        version = exact.group(1)
+                        result.php_version = version
+                        self._evaluar_php_cves(result, version)
+                        return True
+                    # Restricción de rango (^8.1, >=8.0…) — no exacta pero útil
+                    if not result.php_version:
+                        result.php_version = f"detectado (composer.lock: PHP {php_req})"
+                        result.findings.append(self._php_hallazgo_oculto(
+                            f"composer.lock — restricción PHP {php_req}",
+                        ))
+                return False
+            except Exception:
+                continue
+        return False
+
+    # ── Sondeo: .env ──────────────────────────────────────────────────────────
+
+    def _probe_dotenv(self, base: str, result: AuditResult) -> bool:
+        """
+        Sondea ficheros .env. SIEMPRE genera hallazgo CRITICAL si está expuesto.
+        También extrae PHP_VERSION= si aparece.
+        Devuelve True si obtiene versión PHP exacta.
+        """
+        for path in self._DOTENV_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status != 200 or not body:
+                    continue
+                body_text = body[:65536].decode("utf-8", errors="replace")
+                body_lower = body_text.lower()
+                # Rechazar respuestas HTML (páginas de error del servidor)
+                if "<html" in body_lower or "<body" in body_lower:
+                    continue
+                if "=" not in body_text:
+                    continue
+
+                # Recopilar keys sensibles presentes (para el detalle del hallazgo)
+                sensitive_keys: list[str] = []
+                php_version_found: str = ""
+                php_binary_hint:   str = ""
+                for line in body_text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, val = line.partition("=")
+                    key_upper = key.strip().upper()
+                    val_clean = val.strip().strip('"').strip("'")
+                    # Keys sensibles conocidas
+                    if any(kw in key_upper for kw in (
+                        "SECRET", "KEY", "TOKEN", "PASSWORD", "PASS", "PWD",
+                        "DATABASE_URL", "DB_PASS", "DB_PASSWORD", "REDIS_URL",
+                        "AWS_", "S3_", "STRIPE_", "SENDGRID_", "MAILGUN_",
+                        "JWT_", "OAUTH_", "AUTH_", "API_KEY", "PRIVATE",
+                    )):
+                        sensitive_keys.append(key.strip())
+                    # PHP version
+                    if key_upper == "PHP_VERSION":
+                        m = re.match(r"(\d+\.\d+\.\d+)", val_clean)
+                        if m:
+                            php_version_found = m.group(1)
+                    elif key_upper == "PHP_BINARY":
+                        m = re.search(r"php(\d+\.\d+)", val_clean)
+                        if m:
+                            php_binary_hint = f"php{m.group(1)}.x"
+
+                keys_str = (
+                    f" Claves sensibles detectadas: {', '.join(sensitive_keys[:8])}."
+                    if sensitive_keys else ""
+                )
+                result.findings.append(Finding(
+                    severity="CRITICAL",
+                    category="Divulgación de información",
+                    name=f"Fichero .env expuesto ({path})",
+                    detail=(
+                        f"El fichero {path} es accesible públicamente en {url_probe}. "
+                        "Puede contener credenciales de base de datos, claves API, "
+                        "tokens OAuth, claves de cifrado y secretos de aplicación."
+                        + keys_str
+                    ),
+                    remediation=(
+                        "Bloquear el acceso a ficheros .env inmediatamente:\n"
+                        "  nginx:  location ~ /\\. { deny all; }\n"
+                        "  apache: <FilesMatch \"^\\.(env|git|htaccess)\">"
+                        " Require all denied </FilesMatch>\n"
+                        "Rotar TODOS los secretos que hayan podido quedar expuestos."
+                    ),
+                    grade_cap="F",
+                ))
+
+                if php_version_found:
+                    result.php_version = php_version_found
+                    self._evaluar_php_cves(result, php_version_found)
+                    return True
+                if php_binary_hint and not result.php_version:
+                    result.php_version = f"detectado (.env PHP_BINARY: {php_binary_hint})"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        f".env expuesto — PHP_BINARY apunta a {php_binary_hint}",
+                    ))
+                # Solo procesamos el primer .env encontrado
+                return False
+            except Exception:
+                continue
+        return False
+
+    # ── Sondeo: PHP-FPM status/ping ───────────────────────────────────────────
+
+    def _probe_fpm_status(self, base: str, result: AuditResult) -> None:
+        """Detecta endpoints de PHP-FPM expuestos. Genera hallazgo propio."""
+        for path, kind in self._FPM_PROBE_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status != 200 or not body:
+                    continue
+                body_text = body[:4096].decode("utf-8", errors="replace")
+                body_lower = body_text.lower()
+                # fpm-ping → "pong"
+                if kind == "ping" and body_text.strip().lower() == "pong":
+                    result.findings.append(Finding(
+                        severity="MEDIUM",
+                        category="Divulgación de información",
+                        name=f"PHP-FPM ping expuesto ({path})",
+                        detail=(
+                            f"El endpoint de ping de PHP-FPM responde en {url_probe}. "
+                            "Confirma PHP-FPM como backend y puede usarse para enumerar "
+                            "la presencia del servicio."
+                        ),
+                        remediation=(
+                            "Restringir el acceso al endpoint de PHP-FPM:\n"
+                            f"  location = {path} {{ allow 127.0.0.1; deny all; }}"
+                        ),
+                        grade_cap="B",
+                    ))
+                    if not result.php_version:
+                        result.php_version = "detectado (PHP-FPM ping)"
+                        result.findings.append(self._php_hallazgo_oculto("PHP-FPM ping activo"))
+                    return
+                # fpm-status → pool info
+                if kind == "status" and "pool" in body_lower and (
+                    "accepted conn" in body_lower or "start time" in body_lower
+                    or "active processes" in body_lower
+                ):
+                    # Intentar extraer versión de la cabecera X-Powered-By que a veces acompaña
+                    powered = hdrs.get("x-powered-by", "")
+                    ver_m   = re.search(r"PHP/(\d+\.\d+\.\d+)", powered, re.IGNORECASE)
+                    if ver_m and not result.php_version:
+                        version = ver_m.group(1)
+                        result.php_version = version
+                        self._evaluar_php_cves(result, version)
+                    result.findings.append(Finding(
+                        severity="HIGH",
+                        category="Divulgación de información",
+                        name=f"PHP-FPM status expuesto ({path})",
+                        detail=(
+                            f"El endpoint de estado de PHP-FPM es público en {url_probe}. "
+                            "Expone información del pool: conexiones aceptadas, procesos "
+                            "activos/inactivos, tiempo de inicio y métricas de rendimiento."
+                        ),
+                        remediation=(
+                            "Restringir el acceso al status de PHP-FPM:\n"
+                            f"  location = {path} {{ allow 127.0.0.1; deny all; }}"
+                        ),
+                        grade_cap="B",
+                    ))
+                    if not result.php_version:
+                        result.php_version = "detectado (PHP-FPM status)"
+                        result.findings.append(self._php_hallazgo_oculto("PHP-FPM status expuesto"))
                     return
             except Exception:
                 continue
 
-        # 2. Rutas de CMS PHP conocidos (solo si no tenemos detección previa)
-        if result.php_version:
-            return
+    # ── Sondeo: framework debug/profiler ─────────────────────────────────────
 
+    def _probe_framework_debug(self, base: str, result: AuditResult) -> None:
+        """Detecta paneles de debug de frameworks PHP expuestos en producción."""
+        for path, framework in self._FRAMEWORK_DEBUG_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status not in (200, 302) or not body:
+                    continue
+                body_lower = body[:16384].lower()
+                # Validar contenido — evitar falsos positivos en rutas genéricas
+                confirmed = False
+                if "ignition" in path:
+                    confirmed = b"ignition" in body_lower or b"phpversion" in body_lower
+                elif "telescope" in path:
+                    confirmed = b"telescope" in body_lower
+                elif "profiler" in path:
+                    confirmed = b"symfony" in body_lower or b"profiler" in body_lower
+                elif "_wdt" in path:
+                    confirmed = b"symfony" in body_lower or b"wdt" in body_lower
+                elif "debugbar" in path:
+                    confirmed = b"debugbar" in body_lower
+                elif "debug" in path:
+                    # Ruta genérica: exigir señales claras de panel de debug PHP
+                    confirmed = (
+                        b"phpversion" in body_lower
+                        or (b"debug" in body_lower and (b"laravel" in body_lower or b"symfony" in body_lower))
+                    )
+                if not confirmed:
+                    continue
+
+                # Intentar extraer versión PHP del JSON
+                # (Ignition y DebugBar devuelven JSON puro; Symfony es HTML)
+                version = ""
+                body_str = body[:32768].decode("utf-8", errors="replace")
+                # Buscar el primer bloque JSON en el body (maneja prefijos HTML)
+                json_start = body_str.find("{")
+                if json_start != -1:
+                    try:
+                        data = json.loads(body_str[json_start:])
+                        php_ver = (
+                            data.get("phpVersion")
+                            or data.get("php_version")
+                            or (data.get("info", {}) or {}).get("php")
+                            or ""
+                        )
+                        if php_ver:
+                            m = re.match(r"(\d+\.\d+\.\d+)", str(php_ver))
+                            if m:
+                                version = m.group(1)
+                    except Exception:
+                        pass
+
+                # Symfony profiler a veces muestra la versión en HTML
+                if not version and b"php version" in body_lower:
+                    m = re.search(
+                        rb"php version[^0-9]*(\d+\.\d+\.\d+)",
+                        body[:16384], re.IGNORECASE,
+                    )
+                    if m:
+                        version = m.group(1).decode("ascii", errors="replace")
+
+                sev = "CRITICAL" if "debug" in path or "telescope" in path else "HIGH"
+                result.findings.append(Finding(
+                    severity=sev,
+                    category="Divulgación de información",
+                    name=f"Panel de debug {framework} expuesto ({path})",
+                    detail=(
+                        f"El panel de depuración de {framework} es accesible en {url_probe}. "
+                        "Expone stack traces, variables de entorno, consultas SQL, "
+                        "configuración de la aplicación y potencialmente credenciales."
+                        + (f" PHP {version} confirmado." if version else "")
+                    ),
+                    remediation=(
+                        f"Deshabilitar {framework} en producción:\n"
+                        "  Laravel: APP_DEBUG=false en .env\n"
+                        "  Symfony: APP_ENV=prod APP_DEBUG=0\n"
+                        f"  O bloquear vía nginx: location ~* {path} {{ deny all; }}"
+                    ),
+                    grade_cap="F" if sev == "CRITICAL" else "C",
+                ))
+
+                if version:
+                    result.php_version = version
+                    self._evaluar_php_cves(result, version)
+                elif not result.php_version:
+                    result.php_version = f"detectado ({framework} debug expuesto)"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        f"panel {framework} en {path}",
+                    ))
+            except Exception:
+                continue
+
+    # ── Sondeo: WordPress version.php ────────────────────────────────────────
+
+    def _probe_wp_version(self, base: str, result: AuditResult) -> None:
+        """Extrae la versión de WordPress de wp-includes/version.php y la correlaciona con PHP."""
+        paths = ("/wp-includes/version.php", "/wp-readme.php")
+        for path in paths:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status != 200 or not body:
+                    continue
+                body_text = body[:8192].decode("utf-8", errors="replace")
+                m = re.search(
+                    r"\$wp_version\s*=\s*['\"]([0-9]+\.[0-9]+(?:\.[0-9]+)?)['\"]",
+                    body_text,
+                )
+                if not m:
+                    continue
+                wp_version = m.group(1)
+                parts      = wp_version.split(".")
+                wp_key     = (int(parts[0]), int(parts[1]))
+                php_min    = self._WP_PHP_MIN.get(wp_key, "7.4")
+
+                result.findings.append(Finding(
+                    severity="MEDIUM",
+                    category="Divulgación de información",
+                    name=f"wp-includes/version.php accesible — WordPress {wp_version}",
+                    detail=(
+                        f"La ruta {url_probe} expone la versión exacta de WordPress ({wp_version}). "
+                        f"WordPress {wp_version} requiere PHP ≥{php_min}. "
+                        "La versión del CMS facilita la búsqueda de vulnerabilidades específicas."
+                    ),
+                    remediation=(
+                        "Bloquear el acceso directo a ficheros PHP de wp-includes:\n"
+                        "  location ~* /wp-includes/.*\\.php$ { deny all; }"
+                    ),
+                    grade_cap="B",
+                ))
+
+                if not result.php_version:
+                    result.php_version = f"detectado (WP {wp_version} → PHP ≥{php_min})"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        f"WordPress {wp_version} requiere PHP ≥{php_min}",
+                        "Verificar la versión exacta de PHP en el servidor con `php --version`.",
+                    ))
+                return
+            except Exception:
+                continue
+
+    # ── Sondeo: fingerprinting de major version por error ────────────────────
+
+    def _probe_php_error_fingerprint(self, base: str, result: AuditResult) -> None:
+        """
+        Distingue PHP 7 de PHP 8 por diferencias de formato en mensajes de error.
+        Solo actúa si hay PHP detectado pero sin major version conocida.
+        PHP 8.0 introdujo "Uncaught Error:" y cambió el formato de los errores.
+        """
+        if not result.php_version:
+            return
+        if re.search(r"\b[78]\.", result.php_version):
+            return  # Ya tenemos al menos la major version
+
+        # Sondear un .php inexistente para provocar un 404 gestionado por PHP
+        # o una ruta que suele devolver error de PHP si el framework está configurado
+        probe_urls = [
+            base + "/__vamp_php_probe__.php",
+            base + "/index.php?vamp_probe_invalid_param=1",
+        ]
+        for url_probe in probe_urls:
+            try:
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if not body:
+                    continue
+                body_text = body[:4096].decode("utf-8", errors="replace").lower()
+
+                # PHP 8.0+ usa "Uncaught Error:" y "Deprecated:" en lugar del viejo "Fatal error:"
+                if "uncaught error:" in body_text or "deprecated:" in body_text:
+                    major_hint = "8.x"
+                elif "fatal error:" in body_text and "uncaught" not in body_text:
+                    major_hint = "7.x"
+                else:
+                    continue
+
+                # Enriquecer la descripción existente sin sobreescribir
+                result.php_version = result.php_version.rstrip(")") + f"; fingerprint PHP {major_hint})"
+                return
+            except Exception:
+                continue
+
+    # ── Sondeo: rutas de CMS PHP conocidos ───────────────────────────────────
+
+    def _probe_cms_paths(self, base: str, result: AuditResult) -> None:
+        """Confirma PHP mediante rutas características de CMS conocidos."""
         for path, cms_name in self._PHP_CMS_PATHS:
             try:
                 url_probe = base + path
                 status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=True)
-                if status not in (200, 302, 301, 401, 403):
+                if status not in (200, 301, 302, 401, 403):
                     continue
-                # Para wp-login y xmlrpc, confirmar contenido WordPress
                 body_lower = (body[:4096].lower() if body else b"")
                 if "wp-login" in path and b"wordpress" not in body_lower and b"wp-" not in body_lower:
                     continue
@@ -1276,7 +1746,7 @@ class HTTPAuditor:
                 result.php_version = f"detectado (sondeo activo: {cms_name})"
                 result.findings.append(self._php_hallazgo_oculto(
                     f"sondeo activo — {cms_name} responde en {path}",
-                    f"Confirmar la versión exacta de PHP en el servidor con `php --version`.",
+                    "Confirmar la versión exacta de PHP en el servidor con `php --version`.",
                 ))
                 return
             except Exception:
