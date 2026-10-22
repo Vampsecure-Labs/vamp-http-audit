@@ -30,7 +30,7 @@
 - Open redirect testing across 16 common parameters: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - GraphQL endpoint detection and introspection availability check
 - **Network/CIDR scanning** (`--network`): async TCP discovery across entire subnets — finds all live web hosts and audits them in one command, ideal for internal network assessments
-- **PHP version detection and CVE check**: multi-layer passive + active detection engine — explicit version in `X-Powered-By`/`Server` headers, final URL `.php` extension, framework session cookies (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ total), CMS headers (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), `<meta name="generator">` extraction, and body signatures (WordPress, Drupal, Joomla, raw PHP errors…); with `--active`: phpinfo() path probing (version extraction) + CMS path confirmation (`/wp-login.php`, `/administrator/index.php`…); checks against known vulnerable ranges (including CVE-2026-109618, CVSS 9.8); CRITICAL finding with grade cap F when vulnerable PHP is detected
+- **PHP version detection and CVE check**: multi-layer passive + active detection engine — explicit version in `X-Powered-By`/`Server` headers, final URL `.php` extension, framework session cookies (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ total), CMS headers (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), `<meta name="generator">` extraction, and body signatures (WordPress, Drupal, Joomla, raw PHP errors…); with `--active`: phpinfo() path probing (exact version extraction), `composer.lock` exposure check (exact version constraint from `platform-overrides` + full dep tree — HIGH finding), `.env` exposure check (CRITICAL security finding + `PHP_VERSION=` extraction), PHP-FPM status/ping endpoint probing, WordPress `version.php` correlation (WP→PHP minimum version mapping), framework debug panel detection (Laravel Ignition with `phpVersion` extraction, Laravel Telescope, Symfony Profiler/WDT — HIGH finding), PHP 7 vs 8 error fingerprinting via injected syntax error, CMS path confirmation (`/wp-login.php`, `/administrator/index.php`…); checks against known vulnerable ranges (including CVE-2026-109618, CVSS 9.8); CRITICAL finding with grade cap F when vulnerable PHP is detected
 - **`--php-only` mode**: suppresses non-PHP output in console — useful when scanning large internal networks to focus only on vulnerable PHP hosts
 - **PHP vulnerable summary**: JSON output includes a `php_vulnerable_summary` block listing all affected hosts, versions, and CVEs — ready to feed into `vamp-penreport`
 - Concurrent multi-URL scanning with configurable worker pool (`--workers`, default 5)
@@ -199,7 +199,7 @@ vamp-http-audit --file urls.txt \
 | `--php-only` | off | Show only PHP-vulnerable hosts in console output (useful with `--network`) |
 | `--timeout N` | 10 | Per-request HTTP timeout in seconds |
 | `--workers N` | 5 | Concurrent worker threads for HTTP auditing |
-| `--active` | off | Enable active probes (IDOR, Host Header Injection, Open Redirect) — authorized targets only |
+| `--active` | off | Enable active probes (IDOR, Host Header Injection, Open Redirect) + PHP active probing (`composer.lock`, `.env`, PHP-FPM, WP `version.php`, framework debug panels, error fingerprinting) — authorized targets only |
 | `--no-verify-ssl` | off | Disable TLS certificate verification |
 | `--json FILE` | — | Export results to JSON (includes `php_vulnerable_summary`) |
 | `--html FILE` | — | Export dark-theme HTML report |
@@ -246,7 +246,7 @@ vamp-http-audit --file urls.txt \
 ### Sample Output
 
 ```text
-vamp-http-audit v1.5.0 · 2 targets
+vamp-http-audit v1.5.1 · 2 targets
 ─────────────────────────────────────────────────────────────────────────
 Target: https://example.com
   Grade: C
@@ -326,6 +326,11 @@ Target: https://api.example.com
 | PHP-002 | PHP version detected (explicit) — checked against known vulnerable ranges | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
 | PHP-003 | phpinfo() exposed — reveals exact PHP version, env vars, loaded modules | OWASP ASVS v4.0 §14.3.3 | HIGH |
 | PHP-004 | PHP version vulnerable to CVE-2026-109618 (OOM longjmp() RCE, CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
+| PHP-005 | `composer.lock` exposed — reveals exact PHP version constraint and full dependency tree (`--active`) | OWASP ASVS v4.0 §14.3.3 | HIGH |
+| PHP-006 | `.env` file exposed — reveals application secrets and optionally `PHP_VERSION=` (`--active`) | OWASP ASVS v4.0 §14.3.3 / CWE-538 | CRITICAL |
+| PHP-007 | PHP-FPM status/ping endpoint exposed — confirms PHP-FPM is running (`--active`) | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-008 | WordPress `version.php` accessible — pinpoints exact WP version for PHP minimum correlation (`--active`) | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-009 | Framework debug panel exposed (Laravel Ignition/Telescope, Symfony Profiler/WDT) — may reveal PHP version and app internals (`--active`) | OWASP ASVS v4.0 §14.3.3 | HIGH |
 
 ---
 
@@ -376,7 +381,7 @@ Use exclusively on systems you own or for which you hold explicit written author
 - Pruebas de redirección abierta en 16 parámetros comunes: `url`, `redirect`, `next`, `return`, `goto`, `destination`, `redir`, `target`, `link`, `forward`, `location`, `rurl`, `returl`, `redirect_uri`, `redirect_url`, `return_url`
 - Detección de endpoints GraphQL y comprobación de disponibilidad de introspección
 - **Escaneo de red/CIDR** (`--network`): descubrimiento TCP asíncrono de subredes completas — descubre todos los hosts web activos y los audita en un solo comando, ideal para evaluaciones de red interna
-- **Detección PHP multi-capa (pasiva + activa)**: motor de 6 capas pasivas — versión explícita en `X-Powered-By`/`Server`, extensión `.php` en URL final, cookies de framework (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ en total), cabeceras CMS (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), extracción de `<meta name="generator">`, firmas en body (WordPress, Drupal, Joomla, errores PHP…); con `--active`: sondeo de rutas phpinfo() con extracción de versión exacta + confirmación por rutas de CMS (`/wp-login.php`, `/administrator/index.php`…); comprueba contra rangos vulnerables conocidos (incluido CVE-2026-109618, CVSS 9.8); hallazgo CRITICAL con cap de nota F cuando se detecta PHP vulnerable
+- **Detección PHP multi-capa (pasiva + activa)**: motor de 6 capas pasivas — versión explícita en `X-Powered-By`/`Server`, extensión `.php` en URL final, cookies de framework (`laravel_session`, `ci_session`, `CAKEPHP`, `MoodleSession`, `ROUNDCUBE_SESSID`, `pmaUser-*`, `wp_*`, 30+ en total), cabeceras CMS (`X-Generator`, `X-Drupal-Cache`, `X-Pingback`…), extracción de `<meta name="generator">`, firmas en body (WordPress, Drupal, Joomla, errores PHP…); con `--active`: sondeo de rutas phpinfo() con extracción de versión exacta, comprobación de `composer.lock` expuesto (versión exacta desde `platform-overrides` + árbol de deps — hallazgo HIGH), comprobación de `.env` expuesto (hallazgo CRITICAL + extracción de `PHP_VERSION=`), sondeo de endpoints PHP-FPM status/ping, correlación de `version.php` de WordPress (tabla mínimo PHP por versión WP), detección de paneles debug de frameworks (Laravel Ignition con extracción de `phpVersion`, Laravel Telescope, Symfony Profiler/WDT — hallazgo HIGH), fingerprinting PHP 7 vs 8 por error de sintaxis inyectado, confirmación por rutas de CMS (`/wp-login.php`, `/administrator/index.php`…); comprueba contra rangos vulnerables conocidos (incluido CVE-2026-109618, CVSS 9.8); hallazgo CRITICAL con cap de nota F cuando se detecta PHP vulnerable
 - **Modo `--php-only`**: suprime en consola la salida no relacionada con PHP — útil al escanear redes internas grandes para centrarse solo en los hosts PHP vulnerables
 - **Resumen de PHP vulnerable**: el JSON incluye un bloque `php_vulnerable_summary` listando todos los hosts afectados, versiones y CVEs — listo para importar en `vamp-penreport`
 - Escaneo multi-URL concurrente con pool de workers configurable (`--workers`, por defecto 5)
@@ -525,7 +530,7 @@ vamp-http-audit --file urls.txt \
 | `--php-only` | off | Mostrar en consola solo hosts con PHP vulnerable (útil con `--network`) |
 | `--timeout N` | 10 | Timeout HTTP por petición en segundos |
 | `--workers N` | 5 | Hilos de trabajo concurrentes para la auditoría HTTP |
-| `--active` | off | Activar pruebas activas (IDOR, Host Header Injection, Open Redirect) — solo en objetivos autorizados |
+| `--active` | off | Activar pruebas activas (IDOR, Host Header Injection, Open Redirect) + sondeo PHP activo (`composer.lock`, `.env`, PHP-FPM, WP `version.php`, paneles debug, fingerprinting de error) — solo en objetivos autorizados |
 | `--no-verify-ssl` | off | Deshabilitar verificación de certificado TLS |
 | `--json FILE` | — | Exportar resultados a JSON (incluye `php_vulnerable_summary`) |
 | `--html FILE` | — | Exportar informe HTML dark-theme |
@@ -617,6 +622,11 @@ vamp-http-audit --file urls.txt \
 | PHP-002 | PHP detectado (versión explícita) — comprobada contra rangos vulnerables conocidos | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
 | PHP-003 | phpinfo() expuesto — revela versión exacta, variables de entorno y módulos | OWASP ASVS v4.0 §14.3.3 | HIGH |
 | PHP-004 | Versión PHP vulnerable a CVE-2026-109618 (RCE OOM longjmp(), CVSS 9.8) | CVE-2026-109618 / NVD | CRITICAL |
+| PHP-005 | `composer.lock` expuesto — revela restricción exacta de versión PHP y árbol completo de dependencias (`--active`) | OWASP ASVS v4.0 §14.3.3 | HIGH |
+| PHP-006 | Fichero `.env` expuesto — revela secretos de la aplicación y opcionalmente `PHP_VERSION=` (`--active`) | OWASP ASVS v4.0 §14.3.3 / CWE-538 | CRITICAL |
+| PHP-007 | Endpoint PHP-FPM status/ping expuesto — confirma que PHP-FPM está en ejecución (`--active`) | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-008 | `version.php` de WordPress accesible — determina versión WP exacta para correlación con mínimo PHP (`--active`) | OWASP ASVS v4.0 §14.3.3 | MEDIUM |
+| PHP-009 | Panel debug de framework expuesto (Laravel Ignition/Telescope, Symfony Profiler/WDT) — puede revelar versión PHP e internos de la app (`--active`) | OWASP ASVS v4.0 §14.3.3 | HIGH |
 
 ---
 
