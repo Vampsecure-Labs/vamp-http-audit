@@ -344,6 +344,7 @@ Use exclusively on systems you own or for which you hold explicit written author
 
 | Version | Main changes |
 |---------|-------------|
+| v1.5.1 | Active PHP probing v2: `composer.lock` exposure (exact PHP version + dep tree), `.env` exposure (CRITICAL finding + `PHP_VERSION=` extraction), PHP-FPM status/ping, WordPress `version.php` correlation, framework debug panels (Laravel Ignition/Telescope, Symfony Profiler/WDT), PHP 7 vs 8 error fingerprinting; `_evaluar_php_cves` deduplicated (idempotent) |
 | v1.5.0 | PHP detection engine v2: 6-layer passive (URL extension, 30+ framework cookies, CMS headers, `X-Generator`, `<meta generator>`, body signatures) + active phpinfo() probing and CMS path confirmation (`--active`); `_evaluar_php_cves` extracted for reuse; `--active` PHP probing triggers `_probe_php_active` |
 | v1.4.1 | PHP fallback detection: PHPSESSID cookie + body signatures (wp-content, PHP error strings) for `expose_php = Off` setups; `_raw_body` field on `AuditResult` |
 | v1.4.0 | Network/CIDR scanning (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); PHP version detection + CVE-2026-109618 check (CRITICAL/F); `--php-only` console filter; `php_vulnerable_summary` in JSON; clearer error when `--network` finds no live hosts |
@@ -634,6 +635,7 @@ Uso exclusivo en sistemas de tu propiedad o para los que dispongas de autorizaci
 
 | Versión | Cambios principales |
 |---------|---------------------|
+| v1.5.1 | Sondeo activo PHP v2: `composer.lock` expuesto (versión PHP exacta + árbol de deps), `.env` expuesto (hallazgo CRITICAL + extracción `PHP_VERSION=`), PHP-FPM status/ping, WordPress `version.php`, paneles debug de frameworks (Laravel Ignition/Telescope, Symfony Profiler/WDT), fingerprinting PHP 7 vs 8 por formato de error; `_evaluar_php_cves` idempotente (sin duplicados) |
 | v1.5.0 | Motor de detección PHP v2: 6 capas pasivas (extensión URL, 30+ cookies de framework, cabeceras CMS, `X-Generator`, `<meta generator>`, firmas body) + sondeo activo phpinfo() y confirmación por rutas CMS (`--active`); `_evaluar_php_cves` extraído como método independiente |
 | v1.4.1 | Detección PHP de respaldo: cookie PHPSESSID + firmas en body (wp-content, errores PHP) para setups con `expose_php = Off`; campo `_raw_body` en `AuditResult` |
 | v1.4.0 | Escaneo de red/CIDR (`--network`, `--scan-ports`, `--scan-timeout`, `--scan-concurrency`); detección PHP + CVE-2026-109618 (CRITICAL/F); filtro `--php-only`; `php_vulnerable_summary` en JSON; mensaje de error mejorado cuando `--network` no descubre hosts |
