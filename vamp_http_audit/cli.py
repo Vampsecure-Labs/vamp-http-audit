@@ -35,7 +35,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-http-audit v1.3.0 · HTTP Security Headers & CORS Auditor
+  vamp-http-audit v1.4.0 · HTTP Security Headers & CORS Auditor
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -128,6 +128,46 @@ class Reporter:
         else:
             self._c.print("\n  [bold green]✔ Sin hallazgos de seguridad[/]")
 
+    def print_php_summary(self, results: list[AuditResult]) -> None:
+        """Tabla de resumen de hosts con PHP vulnerable."""
+        vulnerables = [r for r in results if r.php_vulnerable]
+        detectados  = [r for r in results if r.php_version and not r.php_vulnerable]
+
+        if not vulnerables and not detectados:
+            return
+
+        self._c.print("\n[bold red]━━━ PHP VULNERABILITY SUMMARY ━━━[/]")
+
+        if vulnerables:
+            tbl = Table(
+                title=f"[bold red]⚠ {len(vulnerables)} host(s) PHP VULNERABLE(S)[/]",
+                header_style="bold red", show_lines=True,
+            )
+            tbl.add_column("URL",           min_width=35)
+            tbl.add_column("Versión PHP",   width=14)
+            tbl.add_column("CVEs",          min_width=22)
+            for r in vulnerables:
+                tbl.add_row(
+                    r.url[:50] + ("…" if len(r.url) > 50 else ""),
+                    f"[bold red]{r.php_version}[/]",
+                    ", ".join(r.php_cves),
+                )
+            self._c.print(tbl)
+
+        if detectados:
+            tbl2 = Table(
+                title=f"[green]{len(detectados)} host(s) PHP detectado (versión no vulnerable)[/]",
+                header_style="bold green", show_lines=False,
+            )
+            tbl2.add_column("URL",          min_width=35)
+            tbl2.add_column("Versión PHP",  width=14)
+            for r in detectados:
+                tbl2.add_row(
+                    r.url[:50] + ("…" if len(r.url) > 50 else ""),
+                    f"[green]{r.php_version}[/]",
+                )
+            self._c.print(tbl2)
+
     def print_summary(self, results: list[AuditResult]) -> None:
         self._c.print("\n")
         tbl = Table(title="Resumen de auditoría HTTP",
@@ -177,11 +217,23 @@ def _parse_args() -> argparse.Namespace:
   vamp-http-audit -u https://ejemplo.com -u https://api.ejemplo.com/v2/
   vamp-http-audit --file urls.txt --html informe.html --markdown informe.md
   vamp-http-audit -u https://ejemplo.com --json salida.json --csv resultados.csv
+  vamp-http-audit --network 192.168.1.0/24 --json red_interna.json
+  vamp-http-audit --network 10.0.0.0/16 --network 172.16.0.0/24 --php-only --json php_vuln.json
+  vamp-http-audit --network 192.168.0.0/24 --scan-ports 80,443,8080 --scan-timeout 2.0
         """,
     )
     p.add_argument("-u", "--url", dest="urls", metavar="URL",
                    action="append", default=[],
                    help="URL a auditar (se puede repetir)")
+    p.add_argument("--network", dest="networks", metavar="CIDR",
+                   action="append", default=[],
+                   help="Rango CIDR a descubrir y auditar (ej. 192.168.1.0/24, se puede repetir)")
+    p.add_argument("--scan-ports", metavar="PORTS",
+                   help="Puertos TCP a probar en --network (coma: 80,443,8080). Default: puertos web comunes")
+    p.add_argument("--scan-timeout", type=float, default=1.5, metavar="SEG",
+                   help="Timeout TCP por host en el escaneo de red (default: 1.5 s)")
+    p.add_argument("--scan-concurrency", type=int, default=200, metavar="N",
+                   help="Conexiones TCP simultáneas en el escaneo de red (default: 200)")
     p.add_argument("--file", metavar="FILE",
                    help="Fichero con URLs, una por línea")
     p.add_argument("--timeout", type=int, default=10,
@@ -199,6 +251,8 @@ def _parse_args() -> argparse.Namespace:
                        "Activar pruebas activas (IDOR, Host Header Injection, Open Redirect). "
                        "Solo usar en entornos autorizados — pueden generar peticiones adicionales."
                    ))
+    p.add_argument("--php-only", action="store_true",
+                   help="Mostrar en consola solo los hosts con PHP vulnerable (útil con --network)")
     from vampsec_report import add_report_args
     add_report_args(p)
     return p.parse_args()
@@ -213,8 +267,35 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
             sys.exit(1)
         raw.extend(line.strip() for line in path.read_text().splitlines()
                    if line.strip() and not line.startswith("#"))
+
+    # Descubrimiento de hosts en rangos CIDR
+    if args.networks:
+        from ._net_scan import escanear_redes, WEB_PORTS
+        puertos = WEB_PORTS
+        if args.scan_ports:
+            try:
+                puertos = [int(p.strip()) for p in args.scan_ports.split(",") if p.strip()]
+            except ValueError:
+                console.print("[bold red]ERROR:[/] --scan-ports debe ser una lista de enteros separados por coma")
+                sys.exit(1)
+        with console.status(
+            f"[cyan]Escaneando {len(args.networks)} rango(s) CIDR en puertos {puertos}…[/]",
+            spinner="dots",
+        ):
+            descubiertas = escanear_redes(
+                args.networks,
+                puertos=puertos,
+                timeout=args.scan_timeout,
+                max_concurrencia=args.scan_concurrency,
+            )
+        console.print(
+            f"[bold green]✔[/] Descubiertas [bold]{len(descubiertas)}[/] URL(s) activas "
+            f"en {', '.join(args.networks)}"
+        )
+        raw.extend(descubiertas)
+
     if not raw:
-        console.print("[bold red]ERROR:[/] Indica al menos una URL con -u o --file")
+        console.print("[bold red]ERROR:[/] Indica al menos una URL con -u, --file o --network")
         sys.exit(1)
 
     urls = []
@@ -222,7 +303,7 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
         if not u.startswith(("http://", "https://")):
             u = "https://" + u
         urls.append(u)
-    return urls
+    return list(dict.fromkeys(urls))  # dedup preservando orden
 
 
 def main() -> None:
@@ -258,10 +339,13 @@ def main() -> None:
 
     results.sort(key=lambda r: r.url)
 
-    for r in results:
+    # Con --php-only solo se muestran los hosts con PHP vulnerable
+    mostrar = [r for r in results if r.php_vulnerable] if args.php_only else results
+    for r in mostrar:
         reporter.print_result(r)
 
     reporter.print_summary(results)
+    reporter.print_php_summary(results)
 
     if args.json:
         Path(args.json).write_text(to_json(results), encoding="utf-8")
