@@ -135,6 +135,7 @@ class HTTPAuditor:
                     self._probe_idor(result)
                     self._probe_host_header_injection(result)
                     self._probe_open_redirect_active(result)
+                    self._probe_php_active(result)
         except Exception as exc:
             result.error = str(exc)
         finally:
@@ -680,91 +681,248 @@ class HTTPAuditor:
         except ValueError:
             return (0,)
 
-    # Firmas en el body que indican PHP aunque no haya cabeceras
-    _PHP_BODY_PATTERNS: tuple[bytes, ...] = (
-        b"<?php", b"phpsessid", b"wp-content/", b"wp-json",
-        b"fatal error:</b>",  b"fatal error: ",
-        b"parse error:</b>",  b"parse error: ",
-        b"warning: include", b"warning: require",
+    # ── Señales pasivas de PHP ───────────────────────────────────────────────
+
+    # Cookies cuya presencia indica un framework PHP concreto
+    _PHP_FRAMEWORK_COOKIES: dict[str, str] = {
+        "phpsessid":           "PHP nativo (expose_php = Off)",
+        "laravel_session":     "Laravel",
+        "laravel_token":       "Laravel",
+        "ci_session":          "CodeIgniter",
+        "cakephp":             "CakePHP",
+        "cake_":               "CakePHP",          # prefijo
+        "moodlesession":       "Moodle",
+        "roundcube_sessid":    "Roundcube Webmail",
+        "roundcube_sessauth":  "Roundcube Webmail",
+        "pmauser-":            "phpMyAdmin",        # prefijo
+        "pmaccsrf-":           "phpMyAdmin",        # prefijo
+        "wordpress_":          "WordPress",         # prefijo
+        "wp_":                 "WordPress",         # prefijo
+        "fuel_session":        "FuelPHP",
+        "kohana_session":      "Kohana",
+        "simplesam":           "SimpleSAMLphp",
+        "piwik_auth":          "Matomo/Piwik",
+        "zf_":                 "Zend Framework",    # prefijo
+        "yii_csrf_token":      "Yii Framework",
+        "_identity":           "Yii Framework",
+        "prestashop":          "PrestaShop",        # prefijo
+        "magento_":            "Magento",           # prefijo
+        "frontend":            "Magento (posible)",
+        "phpbb3_":             "phpBB",             # prefijo
+        "drupal_uid_":         "Drupal",            # prefijo
+        "drupal_session":      "Drupal",
+        "symfony":             "Symfony",           # prefijo
+        "silex_":              "Silex (Symfony)",
+        "nette_":              "Nette Framework",
+        "slim_session":        "Slim Framework",
+        "typo3_":              "TYPO3",             # prefijo
+    }
+
+    # Headers de servidor/CMS que delatan PHP sin exponer la versión
+    _PHP_CMS_HEADERS: tuple[str, ...] = (
+        "x-drupal-cache", "x-drupal-dynamic-cache", "x-generator",
+        "x-powered-cms", "x-wordpress-hit", "x-pingback",
+        "x-magento-tags", "x-magento-cache-control",
     )
+
+    # Firmas en el body (primeros 8 KB, lowercase)
+    _PHP_BODY_PATTERNS: tuple[tuple[bytes, str], ...] = (
+        (b"<?php",                           "código PHP expuesto"),
+        (b"wp-content/",                     "WordPress"),
+        (b"wp-includes/",                    "WordPress"),
+        (b"wordpress.org",                   "WordPress"),
+        (b"/wp-json",                        "WordPress REST API"),
+        (b"joomla",                          "Joomla"),
+        (b"com_content",                     "Joomla"),
+        (b"drupal.js",                       "Drupal"),
+        (b"drupal-settings-json",            "Drupal"),
+        (b"phpmyadmin",                      "phpMyAdmin"),
+        (b"pma_lang",                        "phpMyAdmin"),
+        (b"roundcube",                       "Roundcube Webmail"),
+        (b"typo3",                           "TYPO3"),
+        (b"prestashop",                      "PrestaShop"),
+        (b"magento",                         "Magento"),
+        (b"fatal error:</b>",                "error PHP en producción"),
+        (b"fatal error: ",                   "error PHP en producción"),
+        (b"parse error:</b>",               "error PHP en producción"),
+        (b"parse error: ",                   "error PHP en producción"),
+        (b"warning: include",               "error PHP en producción"),
+        (b"warning: require",               "error PHP en producción"),
+        (b"phpsessid",                       "PHP nativo (cookie en body)"),
+    )
+
+    # Rutas que phpinfo() expone — para sondeo activo
+    _PHPINFO_PATHS: tuple[str, ...] = (
+        "/phpinfo.php", "/info.php", "/php.php", "/test.php", "/phptest.php",
+        "/php_info.php", "/phpinfo/", "/server-status.php",
+    )
+
+    # Rutas de CMS PHP conocidos — para sondeo activo
+    _PHP_CMS_PATHS: tuple[tuple[str, str], ...] = (
+        ("/wp-login.php",            "WordPress"),
+        ("/wp-json/wp/v2/",          "WordPress REST API"),
+        ("/xmlrpc.php",              "WordPress XML-RPC"),
+        ("/administrator/index.php", "Joomla"),
+        ("/api/index.php",           "Joomla API"),
+        ("/index.php?option=com_users", "Joomla"),
+        ("/user/login",              "Drupal"),
+        ("/core/misc/drupal.js",     "Drupal"),
+        ("/phpmyadmin/",             "phpMyAdmin"),
+        ("/pma/",                    "phpMyAdmin"),
+        ("/roundcube/",              "Roundcube"),
+        ("/webmail/",                "Roundcube (posible)"),
+        ("/typo3/",                  "TYPO3 backend"),
+    )
+
+    def _php_hallazgo_oculto(self, senal: str, remediacion_extra: str = "") -> "Finding":
+        """Genera un hallazgo MEDIUM estándar para PHP detectado sin versión."""
+        base_rem = (
+            "Verificar la versión de PHP en el servidor:\n"
+            "  php --version\n"
+            "Si es vulnerable, actualizar a ≥8.2.35, ≥8.3.36, ≥8.4.27 o ≥8.5.12."
+        )
+        return Finding(
+            severity="MEDIUM",
+            category="Vulnerabilidad PHP",
+            name=f"PHP detectado — versión oculta ({senal})",
+            detail=(
+                f"PHP detectado a través de: {senal}. "
+                "La versión exacta no está expuesta en cabeceras HTTP. "
+                "Si la versión es < 8.2.35, < 8.3.36, < 8.4.27 o < 8.5.12, el servidor puede "
+                "ser vulnerable a CVE-2026-109618 (RCE, CVSS 9.8)."
+            ),
+            remediation=base_rem + ("\n" + remediacion_extra if remediacion_extra else ""),
+            grade_cap="B",
+        )
 
     def _detectar_php(self, result: AuditResult) -> None:
         """
-        Extrae la versión PHP de cabeceras HTTP y evalúa si es vulnerable.
-        Si la versión no está en cabeceras, busca señales indirectas:
-          1. Cookie PHPSESSID (PHP running con expose_php = Off)
-          2. Firmas en el body (errores PHP, WordPress, <?php en respuesta)
+        Detección multi-señal de PHP (pasiva).
+
+        Orden de prioridad:
+          1. Versión explícita en X-Powered-By / Server → CVE check
+          2. URL final con extensión .php
+          3. Cookies de framework PHP (PHPSESSID, laravel_session, ci_session…)
+          4. Headers CMS (X-Generator, X-Drupal-Cache, X-Pingback…)
+          5. Meta generator en body → extrae CMS/versión si está disponible
+          6. Firmas en body (wp-content/, Drupal JS, errores PHP…)
         """
-        h = result.headers
+        h       = result.headers
         version: str = ""
 
-        # 1. Versión explícita en X-Powered-By o Server
+        # ── 1. Versión explícita en cabeceras ────────────────────────────────
         for cabecera in ("x-powered-by", "server"):
             val = h.get(cabecera, "")
-            m = re.search(r"PHP/(\d+\.\d+\.\d+)", val, re.IGNORECASE)
+            m   = re.search(r"PHP/(\d+\.\d+\.\d+)", val, re.IGNORECASE)
             if m:
                 version = m.group(1)
                 break
 
-        # 2. PHPSESSID en cookies o Set-Cookie raw (PHP con expose_php = Off)
-        if not version:
-            set_cookie_raw = h.get("_set_cookie_list", "").upper()
-            cookie_names   = [ck.name.upper() for ck in result.cookies]
-            if "PHPSESSID" in cookie_names or "PHPSESSID" in set_cookie_raw:
-                result.php_version = "detectado (versión oculta)"
-                result.findings.append(Finding(
-                    severity="MEDIUM",
-                    category="Vulnerabilidad PHP",
-                    name="PHP detectado — versión oculta (PHPSESSID)",
-                    detail=(
-                        "PHP detectado a través de la cookie PHPSESSID, pero la versión exacta no está "
-                        "expuesta en cabeceras HTTP (expose_php = Off o reverse proxy). "
-                        "Si la versión es < 8.2.35, < 8.3.36, < 8.4.27 o < 8.5.12, el servidor puede "
-                        "ser vulnerable a CVE-2026-109618 (RCE, CVSS 9.8). "
-                        "Verifica la versión con `php --version` en el servidor."
-                    ),
-                    remediation=(
-                        "Verificar la versión de PHP en el servidor:\n"
-                        "  php --version\n"
-                        "Si es vulnerable, actualizar a ≥8.2.35, ≥8.3.36, ≥8.4.27 o ≥8.5.12.\n"
-                        "Para ocultar la cookie PHPSESSID (fingerprinting), cambiar en php.ini:\n"
-                        "  session.name = SESSID"
-                    ),
-                    grade_cap="B",
+        if version:
+            # Versión conocida → saltar al CVE check al final del método
+            pass
+
+        # ── 2. URL final con extensión .php ──────────────────────────────────
+        if not version and result.final_url:
+            parsed_final = urllib.parse.urlparse(result.final_url)
+            path_lower   = parsed_final.path.lower()
+            if path_lower.endswith(".php") or ".php?" in path_lower or ".php/" in path_lower:
+                result.php_version = "detectado (extensión .php en URL)"
+                result.findings.append(self._php_hallazgo_oculto(
+                    f"extensión .php en URL final ({result.final_url})",
+                    "Considera usar URL rewriting para ocultar extensiones de framework.",
                 ))
                 return
 
-        # 3. Firmas en el body (errores PHP, WordPress, etc.)
+        # ── 3. Cookies de framework PHP ──────────────────────────────────────
         if not version:
-            body_lower = result._raw_body[:8192].lower() if result._raw_body else b""
-            if any(p in body_lower for p in self._PHP_BODY_PATTERNS):
-                result.php_version = "detectado (versión oculta)"
-                result.findings.append(Finding(
-                    severity="MEDIUM",
-                    category="Vulnerabilidad PHP",
-                    name="PHP detectado — versión oculta (firma en body)",
-                    detail=(
-                        "PHP detectado a través de firmas en el cuerpo de la respuesta "
-                        "(errores PHP, rutas wp-content, etc.), pero la versión exacta no está expuesta. "
-                        "Si la versión es < 8.2.35, < 8.3.36, < 8.4.27 o < 8.5.12, el servidor puede "
-                        "ser vulnerable a CVE-2026-109618 (RCE, CVSS 9.8). "
-                        "Verifica la versión con `php --version` en el servidor."
-                    ),
-                    remediation=(
-                        "Verificar la versión de PHP en el servidor:\n"
-                        "  php --version\n"
-                        "Si es vulnerable, actualizar a ≥8.2.35, ≥8.3.36, ≥8.4.27 o ≥8.5.12.\n"
-                        "Para suprimir errores PHP en el body:\n"
-                        "  display_errors = Off  (en php.ini)"
-                    ),
-                    grade_cap="B",
+            set_cookie_raw = h.get("_set_cookie_list", "").lower()
+            cookie_names   = [ck.name.lower() for ck in result.cookies]
+            all_cookies    = " ".join(cookie_names) + " " + set_cookie_raw
+
+            matched_fw: str = ""
+            for cookie_key, framework in self._PHP_FRAMEWORK_COOKIES.items():
+                # Soporta prefijos (terminan en "_") y nombres exactos
+                if cookie_key.endswith("_"):
+                    if any(c.startswith(cookie_key) for c in cookie_names) or cookie_key in set_cookie_raw:
+                        matched_fw = framework
+                        break
+                else:
+                    if cookie_key in all_cookies:
+                        matched_fw = framework
+                        break
+
+            if matched_fw:
+                result.php_version = f"detectado (cookie {matched_fw})"
+                result.findings.append(self._php_hallazgo_oculto(
+                    f"cookie de framework {matched_fw}",
+                    f"Para reducir fingerprinting de {matched_fw}, renombra la cookie de sesión.",
                 ))
                 return
+
+        # ── 4. Headers de CMS / plataforma PHP ───────────────────────────────
+        if not version:
+            for hname in self._PHP_CMS_HEADERS:
+                val = h.get(hname, "")
+                if val:
+                    # X-Generator puede revelar CMS y versión
+                    cms_label = f"{hname}: {val[:60]}"
+                    result.php_version = f"detectado (header {hname})"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        cms_label,
+                        f"Eliminar el header {hname!r} del servidor para reducir fingerprinting.",
+                    ))
+                    return
+
+        # ── 5. Meta generator en body ─────────────────────────────────────────
+        if not version:
+            body_sample = result._raw_body[:16384] if result._raw_body else b""
+            meta_m      = re.search(
+                rb'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\'<>]{3,80})["\']',
+                body_sample, re.IGNORECASE,
+            )
+            if not meta_m:
+                # Orden alternativo de atributos
+                meta_m = re.search(
+                    rb'<meta[^>]+content=["\']([^"\'<>]{3,80})["\'][^>]+name=["\']generator["\']',
+                    body_sample, re.IGNORECASE,
+                )
+            if meta_m:
+                generator = meta_m.group(1).decode("utf-8", errors="replace").strip()
+                gen_lower = generator.lower()
+                if any(kw in gen_lower for kw in (
+                    "wordpress", "joomla", "drupal", "typo3",
+                    "magento", "prestashop", "moodle", "phpbb",
+                )):
+                    result.php_version = f"detectado (meta generator: {generator[:40]})"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        f"meta generator: {generator[:60]}",
+                        "Elimina o vacía el tag <meta name=\"generator\"> para reducir fingerprinting.",
+                    ))
+                    return
+
+        # ── 6. Firmas en body ─────────────────────────────────────────────────
+        if not version:
+            body_lower = (result._raw_body[:8192].lower() if result._raw_body else b"")
+            for pattern, descripcion in self._PHP_BODY_PATTERNS:
+                if pattern in body_lower:
+                    result.php_version = f"detectado (body: {descripcion})"
+                    result.findings.append(self._php_hallazgo_oculto(
+                        descripcion,
+                        ("Desactiva la visualización de errores PHP en producción:\n"
+                         "  display_errors = Off  (php.ini)")
+                        if "error" in descripcion else "",
+                    ))
+                    return
 
         if not version:
             return
 
         result.php_version = version
+        self._evaluar_php_cves(result, version)
+
+    def _evaluar_php_cves(self, result: AuditResult, version: str) -> None:
+        """Evalúa si una versión PHP concreta cae en rangos CVE conocidos y añade el hallazgo."""
         v = self._vt(version)
 
         cves_aplicables: list[str] = []
@@ -1015,6 +1173,114 @@ class HTTPAuditor:
                 ))
         except Exception:
             pass
+
+    def _probe_php_active(self, result: AuditResult) -> None:
+        """
+        Sondeo activo de PHP: solo se ejecuta con --active.
+        1. Intenta rutas de phpinfo() para extraer la versión exacta.
+        2. Si no se encuentra phpinfo, intenta rutas de CMS PHP conocidos.
+        No sobreescribe una detección pasiva ya confirmada con versión numérica.
+        """
+        # Si ya tenemos versión exacta (detectada pasivamente), no hace falta sondear
+        if result.php_version and re.match(r"\d+\.\d+\.\d+", result.php_version):
+            return
+
+        parsed = urllib.parse.urlparse(result.final_url or result.url)
+        base   = f"{parsed.scheme}://{parsed.netloc}"
+
+        # 1. Rutas de phpinfo()
+        phpinfo_re = re.compile(
+            rb"PHP Version\s*</td[^>]*>\s*<td[^>]*>([0-9]+\.[0-9]+\.[0-9]+)",
+            re.IGNORECASE,
+        )
+        for path in self._PHPINFO_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=False)
+                if status != 200 or not body:
+                    continue
+                # Confirmar que es una página phpinfo real
+                body_lower = body[:32768].lower()
+                if b"phpinfo()" not in body_lower and b"php version" not in body_lower:
+                    continue
+                # Intentar extraer la versión
+                m = phpinfo_re.search(body[:32768])
+                if m:
+                    version = m.group(1).decode("ascii", errors="replace")
+                    result.php_version = version
+                    # Evaluar CVEs con la versión encontrada
+                    self._evaluar_php_cves(result, version)
+                    # Si no hay CVE añade un hallazgo informativo de exposición
+                    if not result.php_vulnerable:
+                        result.findings.append(Finding(
+                            severity="HIGH",
+                            category="Vulnerabilidad PHP",
+                            name=f"phpinfo() expuesto en {path}",
+                            detail=(
+                                f"La ruta {url_probe} devuelve phpinfo() completo (PHP {version}). "
+                                "Expone versión exacta, variables de entorno, configuración, rutas del sistema "
+                                "y módulos cargados — información muy valiosa para un atacante."
+                            ),
+                            remediation=(
+                                "Eliminar o restringir el acceso a phpinfo() en producción:\n"
+                                f"  rm {path}   (o equivalente en la docroot)\n"
+                                "  O protegerlo con autenticación básica desde nginx/apache."
+                            ),
+                            grade_cap="C",
+                        ))
+                    else:
+                        # Añadir el contexto de exposición al hallazgo CVE
+                        result.findings.append(Finding(
+                            severity="HIGH",
+                            category="Vulnerabilidad PHP",
+                            name=f"phpinfo() expuesto en {path}",
+                            detail=f"La ruta {url_probe} confirma PHP {version} y expone la configuración completa.",
+                            remediation=f"Eliminar {path} de la docroot inmediatamente.",
+                            grade_cap="C",
+                        ))
+                    return
+                else:
+                    # phpinfo sin versión extraíble — todavía es una exposición
+                    result.php_version = "detectado (phpinfo expuesto, versión no extraída)"
+                    result.findings.append(Finding(
+                        severity="HIGH",
+                        category="Vulnerabilidad PHP",
+                        name=f"phpinfo() expuesto en {path}",
+                        detail=(
+                            f"La ruta {url_probe} devuelve phpinfo() pero no se pudo extraer la versión exacta. "
+                            "Expone configuración sensible del servidor."
+                        ),
+                        remediation=f"Eliminar {path} de la docroot.",
+                        grade_cap="C",
+                    ))
+                    return
+            except Exception:
+                continue
+
+        # 2. Rutas de CMS PHP conocidos (solo si no tenemos detección previa)
+        if result.php_version:
+            return
+
+        for path, cms_name in self._PHP_CMS_PATHS:
+            try:
+                url_probe = base + path
+                status, hdrs, body = self._fetch(url_probe, method="GET", follow_redirects=True)
+                if status not in (200, 302, 301, 401, 403):
+                    continue
+                # Para wp-login y xmlrpc, confirmar contenido WordPress
+                body_lower = (body[:4096].lower() if body else b"")
+                if "wp-login" in path and b"wordpress" not in body_lower and b"wp-" not in body_lower:
+                    continue
+                if "xmlrpc" in path and b"xml" not in body_lower:
+                    continue
+                result.php_version = f"detectado (sondeo activo: {cms_name})"
+                result.findings.append(self._php_hallazgo_oculto(
+                    f"sondeo activo — {cms_name} responde en {path}",
+                    f"Confirmar la versión exacta de PHP en el servidor con `php --version`.",
+                ))
+                return
+            except Exception:
+                continue
 
     def _probe_open_redirect_active(self, result: AuditResult) -> None:
         """
