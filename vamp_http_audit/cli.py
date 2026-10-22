@@ -295,7 +295,15 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
         raw.extend(descubiertas)
 
     if not raw:
-        console.print("[bold red]ERROR:[/] Indica al menos una URL con -u, --file o --network")
+        if args.networks:
+            console.print(
+                "[bold red]ERROR:[/] No se descubrieron hosts activos en los rangos CIDR especificados.\n"
+                "  · Verifica conectividad con la red objetivo\n"
+                "  · Prueba con --scan-timeout mayor (ej. --scan-timeout 3.0)\n"
+                "  · Especifica puertos manualmente con --scan-ports 80,443,8080"
+            )
+        else:
+            console.print("[bold red]ERROR:[/] Indica al menos una URL con -u, --file o --network")
         sys.exit(1)
 
     urls = []
