@@ -20,6 +20,7 @@ from ._models import (
     HTML_GRADE_COLOR,
     AuditResult,
     CookieInfo,
+    _T,
 )
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ def to_json(results: list[AuditResult]) -> str:
         return {
             "url": r.url, "final_url": r.final_url, "timestamp": r.timestamp,
             "status_code": r.status_code, "grade": r.grade,
-            "grade_description": GRADE_DESCRIPTION.get(r.grade, ""),
+            "grade_description": str(GRADE_DESCRIPTION.get(r.grade, "")),
             "error": r.error, "max_severity": r.max_severity,
             # Detección PHP
             "php_version":    r.php_version or None,
@@ -86,7 +87,7 @@ def to_json(results: list[AuditResult]) -> str:
             },
             "results": resultados,
         },
-        indent=2, ensure_ascii=False,
+        indent=2, ensure_ascii=False, default=str,
     )
 
 
@@ -115,7 +116,7 @@ def to_html(results: list[AuditResult]) -> str:
             v = h.get(key)
             return f'<span class="hdr-present">{escape(v[:80])}…</span>' if v and len(v) > 80 \
                 else f'<span class="hdr-present">{escape(v)}</span>' if v \
-                else '<span class="hdr-absent">AUSENTE</span>'
+                else f'<span class="hdr-absent">{_T("ABSENT","AUSENTE")}</span>'
 
         headers_table = "".join(
             f"<tr><td>{name}</td><td>{_hval(key)}</td></tr>"
@@ -149,7 +150,7 @@ def to_html(results: list[AuditResult]) -> str:
             cookies_html = f"""
             <h3>Cookies ({len(r.cookies)})</h3>
             <table class="findings-table">
-              <thead><tr><th>Nombre</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th></tr></thead>
+              <thead><tr><th>{_T("Name","Nombre")}</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th></tr></thead>
               <tbody>{ck_rows}</tbody>
             </table>"""
 
@@ -158,15 +159,15 @@ def to_html(results: list[AuditResult]) -> str:
             f'<td>{escape(f.category)}</td>'
             f'<td>{escape(f.name)}</td>'
             f'<td>{escape(f.detail)}'
-            f'{"<details class=remed><summary>Ver remediación</summary><pre>" + escape(f.remediation) + "</pre></details>" if f.remediation else ""}'
+            f'{f"<details class=remed><summary>{_T('See remediation','Ver remediación')}</summary><pre>" + escape(f.remediation) + "</pre></details>" if f.remediation else ""}'
             f'</td></tr>'
             for f in r.findings
         )
         findings_html = (
             f'<table class="findings-table"><thead><tr>'
-            f'<th>Severidad</th><th>Categoría</th><th>Hallazgo</th><th>Detalle</th>'
+            f'{_T("Severity","Severidad")}</th><th>{_T("Category","Categoría")}</th><th>{_T("Finding","Hallazgo")}</th><th>{_T("Detail","Detalle")}'
             f'</tr></thead><tbody>{f_rows}</tbody></table>'
-        ) if r.findings else '<p class="good">✔ Sin hallazgos</p>'
+        ) if r.findings else f'<p class="good">✔ {_T("No findings","Sin hallazgos")}</p>'
 
         rows_html.append(f"""
         <div class="result-block">
@@ -177,16 +178,16 @@ def to_html(results: list[AuditResult]) -> str:
               <p class="grade-desc">{grade_desc_h}</p>
             </div>
           </div>
-          <h3>Cabeceras de seguridad</h3>
+          <h3>{_T("Security headers","Cabeceras de seguridad")}</h3>
           <table class="info-table"><tbody>{headers_table}</tbody></table>
           {cookies_html}
-          <h3>Hallazgos ({len(r.findings)})</h3>
+          <h3>{_T("Findings","Hallazgos")} ({len(r.findings)})</h3>
           {findings_html}
         </div>""")
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return f"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
+<html lang="{_T("en","es")}"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VampSecure Labs — HTTP Audit Report</title>
 <style>
@@ -226,7 +227,7 @@ footer{{margin-top:32px;text-align:center;color:var(--text-dim);font-size:11px}}
 </style></head><body>
 <header>
   <h1>VampSecure Labs — HTTP Security Audit Report</h1>
-  <p>{TOOL_NAME} v{VERSION} · {generated} · VampSecure Studios · Uso exclusivo en auditorías autorizadas</p>
+  <p>{TOOL_NAME} v{VERSION} · {generated} · VampSecure Studios · {_T("For authorized audits only","Uso exclusivo en auditorías autorizadas")}</p>
 </header>
 {"".join(rows_html)}
 <footer>© VampSecure Studios — VampSecure Labs Security Research Division</footer>
@@ -242,15 +243,15 @@ def to_markdown(results: list[AuditResult]) -> str:
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = []
     lines += [
-        "# VampSecure Labs — Informe de Auditoría HTTP",
+        f"# VampSecure Labs — {_T('HTTP Audit Report','Informe de Auditoría HTTP')}",
         "",
-        f"**Herramienta:** {TOOL_NAME} v{VERSION}  ",
-        f"**Generado:** {generated}  ",
-        f"**URLs analizadas:** {len(results)}  ",
+        f"**{_T('Tool','Herramienta')}:** {TOOL_NAME} v{VERSION}  ",
+        f"**{_T('Generated','Generado')}:** {generated}  ",
+        f"**{_T('URLs analysed','URLs analizadas')}:** {len(results)}  ",
         "", "---", "",
-        "## Resumen Ejecutivo",
+        f"## {_T('Executive Summary','Resumen Ejecutivo')}",
         "",
-        "| URL | Nota | Estado | CSP | HSTS | Cookies | C/H | Sev. Máx. |",
+        f"| URL | {_T('Grade','Nota')} | {_T('Status','Estado')} | CSP | HSTS | Cookies | C/H | {_T('Max Sev.','Sev. Máx.')} |",
         "|-----|------|--------|-----|------|---------|-----|-----------|",
     ]
     for r in results:
@@ -272,7 +273,7 @@ def to_markdown(results: list[AuditResult]) -> str:
             lines.append("")
             continue
 
-        lines.append(f"### 📊 Calificación: **{r.grade}** — {GRADE_DESCRIPTION.get(r.grade,'')}")
+        lines.append(f"### 📊 Calificación: **{r.grade}** — {str(str(GRADE_DESCRIPTION.get(r.grade,'')))}")
         lines.append("")
         lines.append("### Cabeceras de seguridad")
         lines.append("")
@@ -290,7 +291,7 @@ def to_markdown(results: list[AuditResult]) -> str:
             ("CORP","cross-origin-resource-policy"),
         ]:
             val = r.headers.get(hkey)
-            val_md = f"`{val[:70]}…`" if val and len(val) > 70 else f"`{val}`" if val else "**AUSENTE**"
+            val_md = f"`{val[:70]}…`" if val and len(val) > 70 else f"`{val}`" if val else f"**{_T('ABSENT','AUSENTE')}**"
             lines.append(f"| {hname} | {val_md} |")
         lines.append("")
 
@@ -317,7 +318,7 @@ def to_markdown(results: list[AuditResult]) -> str:
                     lines.append(f"**{f.name}**")
                     lines.append(f"> {f.detail}")
                     if f.remediation:
-                        lines += ["> ", "> **Remediación:**", "> ", "> ```"]
+                        lines += ["> ", f"> **{_T('Remediation','Remediación')}:**", "> ", "> ```"]
                         for ln in f.remediation.splitlines():
                             lines.append(f"> {ln}")
                         lines.append("> ```")
@@ -336,8 +337,8 @@ def to_markdown(results: list[AuditResult]) -> str:
         lines += ["---", ""]
 
     lines += [
-        f"*Generado por {TOOL_NAME} v{VERSION} · VampSecure Studios · VampSecure Labs Security Research Division*  ",
-        "*Uso exclusivo en entornos autorizados. El uso no autorizado es ilegal.*",
+        f"*{_T('Generated by','Generado por')} {TOOL_NAME} v{VERSION} · VampSecure Studios · VampSecure Labs Security Research Division*  ",
+        f"*{_T('For authorized environments only. Unauthorized use is illegal.','Uso exclusivo en entornos autorizados. El uso no autorizado es ilegal.')}*",
         "",
     ]
     return "\n".join(lines)
@@ -352,18 +353,18 @@ def to_csv(results: list[AuditResult], base_path: str) -> tuple[str, str]:
     buf_h = io.StringIO()
     w_h   = csv_module.writer(buf_h)
     w_h.writerow([
-        "url","nota","estado","csp","hsts","xfo","xcto","rp","pp",
+        "url","grade","status","csp","hsts","xfo","xcto","rp","pp",
         "coep","coop","corp","server","x_powered_by",
-        "cookies","cors_reflejado","cors_creds","open_redirect",
-        "num_hallazgos","hallazgos_critical","hallazgos_high",
-        "severidad_maxima","error","timestamp",
+        "cookies","cors_reflected","cors_creds","open_redirect",
+        "num_findings","findings_critical","findings_high",
+        "max_severity","error","timestamp",
     ])
     for r in results:
         hg = r.headers.get
         w_h.writerow([
             r.url, r.grade, r.status_code,
-            "SI" if hg("content-security-policy")      else "NO",
-            "SI" if hg("strict-transport-security")    else "NO",
+            str(_T("YES","SI")) if hg("content-security-policy")      else str(_T("NO","NO")),
+            str(_T("YES","SI")) if hg("strict-transport-security")    else str(_T("NO","NO")),
             hg("x-frame-options",""),
             hg("x-content-type-options",""),
             hg("referrer-policy",""),
@@ -374,8 +375,8 @@ def to_csv(results: list[AuditResult], base_path: str) -> tuple[str, str]:
             hg("server",""),
             hg("x-powered-by",""),
             len(r.cookies),
-            "SI" if r.cors_origin_reflected else "NO",
-            "SI" if r.cors_credentials else "NO",
+            str(_T("YES","SI")) if r.cors_origin_reflected else str(_T("NO","NO")),
+            str(_T("YES","SI")) if r.cors_credentials else str(_T("NO","NO")),
             "|".join(r.open_redirect_params),
             len(r.findings),
             sum(1 for f in r.findings if f.severity=="CRITICAL"),
@@ -385,7 +386,7 @@ def to_csv(results: list[AuditResult], base_path: str) -> tuple[str, str]:
 
     buf_f = io.StringIO()
     w_f   = csv_module.writer(buf_f)
-    w_f.writerow(["url","nota","severidad","categoria","hallazgo","detalle","cap_nota","remediacion"])
+    w_f.writerow(["url","grade","severity","category","finding","detail","grade_cap","remediation"])
     for r in results:
         for f in r.findings:
             w_f.writerow([
@@ -421,13 +422,13 @@ def _findings_vsl(results: list[AuditResult]) -> list:
                 continue
             n += 1
             # Construir evidencia contextual
-            ev_parts = [f"URL objetivo: {r.final_url or r.url}"]
+            ev_parts = [f"{_T('Target URL','URL objetivo')}: {r.final_url or r.url}"]
             if r.status_code:
                 ev_parts.append(f"HTTP {r.status_code}")
             if f.detail:
-                ev_parts.append(f"Detalle: {f.detail}")
+                ev_parts.append(f"{_T('Detail','Detalle')}: {f.detail}")
             if f.grade_cap:
-                ev_parts.append(f"Cap de nota: {f.grade_cap} (nota final: {r.grade})")
+                ev_parts.append(f"{_T('Grade cap','Cap de nota')}: {f.grade_cap} ({_T('final grade','nota final')}: {r.grade})")
 
             findings.append(VSLFinding(
                 id          = f"HTTP-{n:03d}",
@@ -435,13 +436,13 @@ def _findings_vsl(results: list[AuditResult]) -> list:
                 severity    = f.severity,
                 description = (
                     f"[{f.category}] {f.name}. "
-                    + (f.detail or "Hallazgo de seguridad en cabeceras/configuración HTTP.")
+                    + (f.detail or str(_T("Security finding in HTTP headers/configuration.","Hallazgo de seguridad en cabeceras/configuración HTTP.")))
                 ),
                 evidence    = "\n".join(ev_parts),
                 affected    = r.final_url or r.url,
                 remediation = (
                     f.remediation or
-                    "Revisar la configuración del servidor web y aplicar las cabeceras de seguridad recomendadas."
+                    str(_T("Review web server configuration and apply recommended security headers.","Revisar la configuración del servidor web y aplicar las cabeceras de seguridad recomendadas."))
                 ),
                 tags        = ["http", "headers", f.category.lower().replace(" ", "-")],
             ))

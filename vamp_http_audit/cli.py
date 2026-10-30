@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+import vamp_http_audit._models as _models
 from ._models import (
     VERSION,
     TOOL_NAME,
@@ -23,6 +24,7 @@ from ._models import (
     SEVERITY_ORDER,
     SEVERITY_COLOR,
     AuditResult,
+    _T,
 )
 from ._core import HTTPAuditor
 from ._report import to_json, to_html, to_markdown, to_csv, _findings_vsl
@@ -35,9 +37,9 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-http-audit v1.5.1 · HTTP Security Headers & CORS Auditor
+  vamp-http-audit v1.6.0 · HTTP Security Headers & CORS Auditor
   ────────────────────────────────────────────────────────────────────────
-  USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
+  FOR AUTHORIZED AUDITS ONLY · Unauthorized use is illegal
 """
 
 # ---------------------------------------------------------------------------
@@ -57,27 +59,27 @@ class Reporter:
 
         grade     = result.grade
         grade_col = GRADE_COLOR.get(grade, "white")
-        grade_desc= GRADE_DESCRIPTION.get(grade, "")
+        grade_desc= str(GRADE_DESCRIPTION.get(grade, ""))
         sev_col   = SEVERITY_COLOR.get(result.max_severity, "white")
 
         self._c.print(f"\n[bold cyan]{'─'*65}[/]")
         self._c.print(
-            f"  Nota: [{grade_col}]{grade:>2}[/{grade_col}]  "
+            f"  {_T("Grade","Nota")}: [{grade_col}]{grade:>2}[/{grade_col}]  "
             f"[bold]{result.url}[/]  "
             f"[{sev_col}]{result.max_severity}[/{sev_col}]"
         )
         self._c.print(f"  [dim]{grade_desc}[/]")
         self._c.print(f"[bold cyan]{'─'*65}[/]")
 
-        self._c.print(f"  [bold]Estado HTTP:[/]     {result.status_code}")
+        self._c.print(f"  [bold]{_T("HTTP Status","Estado HTTP")}:[/]     {result.status_code}")
 
         # Cabeceras clave
-        csp   = result.headers.get("content-security-policy", "[red]AUSENTE[/]")
-        hsts  = result.headers.get("strict-transport-security", "[red]AUSENTE[/]")
-        xfo   = result.headers.get("x-frame-options", "[red]AUSENTE[/]")
-        xcto  = result.headers.get("x-content-type-options", "[red]AUSENTE[/]")
-        rp    = result.headers.get("referrer-policy", "[red]AUSENTE[/]")
-        pp    = result.headers.get("permissions-policy", "[red]AUSENTE[/]")
+        csp   = result.headers.get("content-security-policy", f"[red]{_T('ABSENT','AUSENTE')}[/]")
+        hsts  = result.headers.get("strict-transport-security", f"[red]{_T('ABSENT','AUSENTE')}[/]")
+        xfo   = result.headers.get("x-frame-options", f"[red]{_T('ABSENT','AUSENTE')}[/]")
+        xcto  = result.headers.get("x-content-type-options", f"[red]{_T('ABSENT','AUSENTE')}[/]")
+        rp    = result.headers.get("referrer-policy", f"[red]{_T('ABSENT','AUSENTE')}[/]")
+        pp    = result.headers.get("permissions-policy", f"[red]{_T('ABSENT','AUSENTE')}[/]")
 
         self._c.print(f"  [bold]CSP:[/]             {csp[:80] + '…' if len(str(csp)) > 80 else csp}")
         self._c.print(f"  [bold]HSTS:[/]            {hsts}")
@@ -87,7 +89,7 @@ class Reporter:
         self._c.print(f"  [bold]Permissions-Policy:[/] {pp[:60] + '…' if len(str(pp)) > 60 else pp}")
 
         if result.cookies:
-            self._c.print(f"\n  [bold]Cookies detectadas:[/] {len(result.cookies)}")
+            self._c.print(f"\n  [bold]{_T("Cookies detected","Cookies detectadas")}:[/] {len(result.cookies)}")
             for ck in result.cookies:
                 flags = []
                 flags.append("[green]S[/]"  if ck.secure   else "[red]S[/]")
@@ -96,15 +98,15 @@ class Reporter:
                 self._c.print(f"    {ck.name:<30} {''.join(flags)} SameSite={ck.samesite or '—'}")
 
         if result.open_redirect_params:
-            self._c.print(f"\n  [bold red]Open redirect: parámetros vulnerables:[/] {', '.join(result.open_redirect_params)}")
+            self._c.print(f"\n  [bold red]{_T("Open redirect: vulnerable parameters","Open redirect: parámetros vulnerables")}:[/] {', '.join(result.open_redirect_params)}")
 
         # Tabla de hallazgos
         if result.findings:
             self._c.print()
             tbl = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 1))
             tbl.add_column("SEV",       width=10)
-            tbl.add_column("Categoría", width=20)
-            tbl.add_column("Hallazgo",  min_width=38)
+            tbl.add_column(str(_T("Category","Categoría")), width=20)
+            tbl.add_column(str(_T("Finding","Hallazgo")),  min_width=38)
             tbl.add_column("Cap",       width=4)
             for f in result.findings:
                 color = SEVERITY_COLOR.get(f.severity, "white")
@@ -118,7 +120,7 @@ class Reporter:
 
             criticos = [f for f in result.findings if f.severity in ("CRITICAL", "HIGH") and f.remediation]
             if criticos:
-                self._c.print("\n  [bold cyan]Pasos de remediación prioritarios:[/]")
+                self._c.print(f"\n  [bold cyan]{_T("Priority remediation steps","Pasos de remediación prioritarios")}:[/]")
                 for f in criticos:
                     self._c.print(Panel(
                         f.remediation,
@@ -126,7 +128,7 @@ class Reporter:
                         border_style="cyan", expand=False,
                     ))
         else:
-            self._c.print("\n  [bold green]✔ Sin hallazgos de seguridad[/]")
+            self._c.print(f"\n  [bold green]✔ {_T("No security findings","Sin hallazgos de seguridad")}[/]")
 
     def print_php_summary(self, results: list[AuditResult]) -> None:
         """Tabla de resumen de hosts con PHP vulnerable."""
@@ -144,7 +146,7 @@ class Reporter:
                 header_style="bold red", show_lines=True,
             )
             tbl.add_column("URL",           min_width=35)
-            tbl.add_column("Versión PHP",   width=14)
+            tbl.add_column(str(_T("PHP version","Versión PHP")), width=14)
             tbl.add_column("CVEs",          min_width=22)
             for r in vulnerables:
                 tbl.add_row(
@@ -160,7 +162,7 @@ class Reporter:
                 header_style="bold green", show_lines=False,
             )
             tbl2.add_column("URL",          min_width=35)
-            tbl2.add_column("Versión PHP",  width=14)
+            tbl2.add_column(str(_T("PHP version","Versión PHP")), width=14)
             for r in detectados:
                 tbl2.add_row(
                     r.url[:50] + ("…" if len(r.url) > 50 else ""),
@@ -170,16 +172,16 @@ class Reporter:
 
     def print_summary(self, results: list[AuditResult]) -> None:
         self._c.print("\n")
-        tbl = Table(title="Resumen de auditoría HTTP",
+        tbl = Table(title=str(_T("HTTP Audit Summary","Resumen de auditoría HTTP")),
                     header_style="bold cyan", show_lines=True)
         tbl.add_column("URL",             min_width=30)
-        tbl.add_column("Nota",            width=5)
-        tbl.add_column("Estado",          width=7)
+        tbl.add_column(str(_T("Grade","Nota")),            width=5)
+        tbl.add_column(str(_T("Status","Estado")),          width=7)
         tbl.add_column("CSP",             width=5)
         tbl.add_column("HSTS",            width=6)
         tbl.add_column("Cookies",         width=8)
-        tbl.add_column("Hallazgos C/H",   width=12)
-        tbl.add_column("Severidad máx.",  width=12)
+        tbl.add_column(str(_T("Findings C/H","Hallazgos C/H")),   width=12)
+        tbl.add_column(str(_T("Max severity","Severidad máx.")),  width=12)
 
         for r in results:
             if r.error:
@@ -253,6 +255,8 @@ def _parse_args() -> argparse.Namespace:
                    ))
     p.add_argument("--php-only", action="store_true",
                    help="Mostrar en consola solo los hosts con PHP vulnerable (útil con --network)")
+    p.add_argument("--lang", choices=["en", "es"], default="en",
+                   help="Output language / Idioma de salida (default: en)")
     from vampsec_report import add_report_args
     add_report_args(p)
     return p.parse_args()
@@ -263,7 +267,7 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
     if args.file:
         path = Path(args.file)
         if not path.is_file():
-            console.print(f"[bold red]ERROR:[/] Fichero no encontrado: {args.file}")
+            console.print(f"[bold red]ERROR:[/] {_T("File not found","Fichero no encontrado")}: {args.file}")
             sys.exit(1)
         raw.extend(line.strip() for line in path.read_text().splitlines()
                    if line.strip() and not line.startswith("#"))
@@ -276,10 +280,10 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
             try:
                 puertos = [int(p.strip()) for p in args.scan_ports.split(",") if p.strip()]
             except ValueError:
-                console.print("[bold red]ERROR:[/] --scan-ports debe ser una lista de enteros separados por coma")
+                console.print(f"[bold red]ERROR:[/] {_T('--scan-ports must be a comma-separated list of integers','--scan-ports debe ser una lista de enteros separados por coma')}")
                 sys.exit(1)
         with console.status(
-            f"[cyan]Escaneando {len(args.networks)} rango(s) CIDR en puertos {puertos}…[/]",
+            f"[cyan]{_T('Scanning','Escaneando')} {len(args.networks)} CIDR range(s) {_T('on ports','en puertos')} {puertos}…[/]",
             spinner="dots",
         ):
             descubiertas = escanear_redes(
@@ -289,21 +293,20 @@ def _resolve_urls(args: argparse.Namespace) -> list[str]:
                 max_concurrencia=args.scan_concurrency,
             )
         console.print(
-            f"[bold green]✔[/] Descubiertas [bold]{len(descubiertas)}[/] URL(s) activas "
-            f"en {', '.join(args.networks)}"
+            f"[bold green]✔[/] {_T('Discovered','Descubiertas')} [bold]{len(descubiertas)}[/] {_T('active URL(s) in','URL(s) activas en')} {', '.join(args.networks)}"
         )
         raw.extend(descubiertas)
 
     if not raw:
         if args.networks:
             console.print(
-                "[bold red]ERROR:[/] No se descubrieron hosts activos en los rangos CIDR especificados.\n"
-                "  · Verifica conectividad con la red objetivo\n"
-                "  · Prueba con --scan-timeout mayor (ej. --scan-timeout 3.0)\n"
-                "  · Especifica puertos manualmente con --scan-ports 80,443,8080"
+                f"[bold red]ERROR:[/] {_T('No active hosts discovered in the specified CIDR ranges.','No se descubrieron hosts activos en los rangos CIDR especificados.')}\n"
+                f"  · {_T('Verify connectivity with the target network','Verifica conectividad con la red objetivo')}\n"
+                f"  · {_T('Try a higher --scan-timeout (e.g. --scan-timeout 3.0)','Prueba con --scan-timeout mayor (ej. --scan-timeout 3.0)')}\n"
+                f"  · {_T('Specify ports manually with --scan-ports 80,443,8080','Especifica puertos manualmente con --scan-ports 80,443,8080')}"
             )
         else:
-            console.print("[bold red]ERROR:[/] Indica al menos una URL con -u, --file o --network")
+            console.print(f"[bold red]ERROR:[/] {_T('Specify at least one URL with -u, --file or --network','Indica al menos una URL con -u, --file o --network')}")
         sys.exit(1)
 
     urls = []
@@ -319,29 +322,30 @@ def main() -> None:
     console.print(BANNER, style="bold magenta")
 
     args     = _parse_args()
+    _models.LANG = args.lang
     urls     = _resolve_urls(args)
 
     if not args.active:
         console.print(
-            "[dim yellow]⚠  Pruebas activas desactivadas (IDOR · Host Header Injection · Open Redirect).[/]\n"
-            "[dim]   Usa [bold]--active[/] para activarlas. Solo en entornos autorizados.[/]\n"
+            f"[dim yellow]⚠  {_T('Active tests disabled','Pruebas activas desactivadas')} (IDOR · Host Header Injection · Open Redirect).[/]\n"
+            f"[dim]   {_T('Use','Usa')} [bold]--active[/] {_T('to enable them. Authorized environments only.','para activarlas. Solo en entornos autorizados.')}[/]\n"
         )
 
     auditor  = HTTPAuditor(timeout=args.timeout, verify_ssl=not args.no_verify_ssl, active=args.active)
     reporter = Reporter(console)
 
-    console.print(f"[bold cyan]Auditando {len(urls)} URL(s)…[/]\n")
+    console.print(f"[bold cyan]{_T("Auditing","Auditando")} {len(urls)} URL(s)…[/]\n")
 
     results: list[AuditResult] = []
 
     if len(urls) == 1:
-        with console.status(f"[cyan]Auditando {urls[0]}…[/]", spinner="dots"):
+        with console.status(f"[cyan]{_T("Auditing","Auditando")} {urls[0]}…[/]", spinner="dots"):
             results.append(auditor.audit(urls[0]))
     else:
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = {pool.submit(auditor.audit, u): u for u in urls}
-            with console.status("[cyan]Auditando URLs en paralelo…[/]", spinner="dots"):
+            with console.status(f"[cyan]{_T("Auditing URLs in parallel","Auditando URLs en paralelo")}…[/]", spinner="dots"):
                 for future in concurrent.futures.as_completed(futures):
                     results.append(future.result())
 
@@ -357,17 +361,17 @@ def main() -> None:
 
     if args.json:
         Path(args.json).write_text(to_json(results), encoding="utf-8")
-        console.print(f"\n[green]✔[/] JSON guardado en [bold]{args.json}[/]")
+        console.print(f"\n[green]✔[/] JSON {_T("saved to","guardado en")} [bold]{args.json}[/]")
     if args.html:
         Path(args.html).write_text(to_html(results), encoding="utf-8")
-        console.print(f"[green]✔[/] HTML guardado en [bold]{args.html}[/]")
+        console.print(f"[green]✔[/] HTML {_T("saved to","guardado en")} [bold]{args.html}[/]")
     if args.markdown:
         Path(args.markdown).write_text(to_markdown(results), encoding="utf-8")
-        console.print(f"[green]✔[/] Markdown guardado en [bold]{args.markdown}[/]")
+        console.print(f"[green]✔[/] Markdown {_T("saved to","guardado en")} [bold]{args.markdown}[/]")
     if args.csv:
         ph, pf = to_csv(results, args.csv)
-        console.print(f"[green]✔[/] CSV resumen: [bold]{ph}[/]")
-        console.print(f"[green]✔[/] CSV hallazgos: [bold]{pf}[/]")
+        console.print(f"[green]✔[/] CSV {_T("summary","resumen")}: [bold]{ph}[/]")
+        console.print(f"[green]✔[/] CSV {_T("findings","hallazgos")}: [bold]{pf}[/]")
 
     # Informes de cliente (formato unificado VSL)
     if args.report_html or args.report_pdf:
@@ -376,13 +380,13 @@ def main() -> None:
         vsl_rep = VampSecReport(meta, _findings_vsl(results))
         if args.report_html:
             vsl_rep.to_html_client(args.report_html)
-            console.print(f"[green]✔[/] Informe cliente HTML: [bold]{args.report_html}[/]")
+            console.print(f"[green]✔[/] {_T("Client HTML report","Informe cliente HTML")}: [bold]{args.report_html}[/]")
         if args.report_pdf:
             try:
                 vsl_rep.to_pdf(args.report_pdf)
-                console.print(f"[green]✔[/] Informe cliente PDF: [bold]{args.report_pdf}[/]")
+                console.print(f"[green]✔[/] {_T("Client PDF report","Informe cliente PDF")}: [bold]{args.report_pdf}[/]")
             except RuntimeError as e:
-                console.print(f"[yellow]⚠ PDF no generado: {e}[/yellow]")
+                console.print(f"[yellow]⚠ {_T("PDF not generated","PDF no generado")}: {e}[/yellow]")
 
     max_sev = "INFO"
     for r in results:

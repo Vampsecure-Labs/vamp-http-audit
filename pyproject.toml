@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vamp-http-audit"
-version = "1.5.1"
-description = "HTTP security headers and CORS auditor — CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy — librería importable"
+version = "1.6.0"
+description = "HTTP security headers and CORS auditor — CSP, HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy — bilingual EN/ES output · importable library"
 readme = "README.md"
 license = { text = "AGPL-3.0-only" }
 requires-python = ">=3.8"

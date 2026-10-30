@@ -48,6 +48,7 @@ from ._models import (
     Finding,
     CookieInfo,
     AuditResult,
+    _T,
 )
 
 # ---------------------------------------------------------------------------
@@ -214,10 +215,10 @@ class HTTPAuditor:
         hsts = h.get("strict-transport-security")
         if not hsts:
             result.findings.append(Finding(
-                severity="HIGH", category="Cabeceras HTTP",
-                name="HSTS ausente",
-                detail="Falta Strict-Transport-Security — posibles ataques de downgrade",
-                remediation=_R_HSTS_ABSENT, grade_cap="C",
+                severity="HIGH", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T("HSTS absent", "HSTS ausente")),
+                detail=str(_T("Missing Strict-Transport-Security — downgrade attacks possible", "Falta Strict-Transport-Security — posibles ataques de downgrade")),
+                remediation=str(_R_HSTS_ABSENT), grade_cap="C",
             ))
         else:
             max_age = 0
@@ -230,71 +231,71 @@ class HTTPAuditor:
                         pass
             if max_age < 10_886_400:
                 result.findings.append(Finding(
-                    severity="MEDIUM", category="Cabeceras HTTP",
-                    name="HSTS max-age insuficiente",
-                    detail=f"max-age={max_age}s — mínimo recomendado 180 días (15 552 000s)",
-                    remediation=_R_HSTS_ABSENT, grade_cap="A-",
+                    severity="MEDIUM", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                    name=str(_T("HSTS max-age insufficient", "HSTS max-age insuficiente")),
+                    detail=str(_T(f"max-age={max_age}s — recommended minimum 180 days (15 552 000s)", f"max-age={max_age}s — mínimo recomendado 180 días (15 552 000s)")),
+                    remediation=str(_R_HSTS_ABSENT), grade_cap="A-",
                 ))
 
         # --- X-Frame-Options ---
         xfo = h.get("x-frame-options")
         if not xfo:
             result.findings.append(Finding(
-                severity="MEDIUM", category="Cabeceras HTTP",
-                name="X-Frame-Options ausente",
-                detail="Sin protección contra clickjacking mediante iframes (sin X-Frame-Options ni frame-ancestors)",
-                remediation=_R_XFO_ABSENT, grade_cap="C",
+                severity="MEDIUM", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T("X-Frame-Options absent", "X-Frame-Options ausente")),
+                detail=str(_T("No protection against clickjacking via iframes (no X-Frame-Options or frame-ancestors)", "Sin protección contra clickjacking mediante iframes (sin X-Frame-Options ni frame-ancestors)")),
+                remediation=str(_R_XFO_ABSENT), grade_cap="C",
             ))
         elif xfo.upper() not in ("DENY", "SAMEORIGIN"):
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
-                name=f"X-Frame-Options con valor no estándar: {xfo}",
-                detail="Valor desconocido — los navegadores lo ignorarán",
-                remediation=_R_XFO_ABSENT,
+                severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T(f"X-Frame-Options non-standard value: {xfo}", f"X-Frame-Options con valor no estándar: {xfo}")),
+                detail=str(_T("Unknown value — browsers will ignore it", "Valor desconocido — los navegadores lo ignorarán")),
+                remediation=str(_R_XFO_ABSENT),
             ))
 
         # --- X-Content-Type-Options ---
         xcto = h.get("x-content-type-options")
         if not xcto:
             result.findings.append(Finding(
-                severity="MEDIUM", category="Cabeceras HTTP",
-                name="X-Content-Type-Options ausente",
-                detail="Posible MIME-type sniffing por el navegador",
-                remediation=_R_XCTO_ABSENT, grade_cap="B",
+                severity="MEDIUM", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T("X-Content-Type-Options absent", "X-Content-Type-Options ausente")),
+                detail=str(_T("Possible MIME-type sniffing by the browser", "Posible MIME-type sniffing por el navegador")),
+                remediation=str(_R_XCTO_ABSENT), grade_cap="B",
             ))
         elif xcto.lower() != "nosniff":
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
+                severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
                 name=f"X-Content-Type-Options incorrecto: {xcto}",
-                detail="El único valor válido es 'nosniff'",
-                remediation=_R_XCTO_ABSENT,
+                detail=str(_T("The only valid value is 'nosniff'", "El único valor válido es 'nosniff'")),
+                remediation=str(_R_XCTO_ABSENT),
             ))
 
         # --- Referrer-Policy ---
         rp = h.get("referrer-policy")
         if not rp:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
-                name="Referrer-Policy ausente",
-                detail="El navegador usa la política por defecto — puede filtrar URLs completas a terceros",
-                remediation=_R_RP_ABSENT, grade_cap="A",
+                severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T("Referrer-Policy absent", "Referrer-Policy ausente")),
+                detail=str(_T("The browser uses the default policy — may leak full URLs to third parties", "El navegador usa la política por defecto — puede filtrar URLs completas a terceros")),
+                remediation=str(_R_RP_ABSENT), grade_cap="A",
             ))
         elif rp.lower() in UNSAFE_REFERRER_POLICIES:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
+                severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
                 name=f"Referrer-Policy insegura: {rp}",
-                detail=UNSAFE_REFERRER_POLICIES[rp.lower()],
-                remediation=_R_RP_ABSENT, grade_cap="A-",
+                detail=str(UNSAFE_REFERRER_POLICIES[rp.lower()]),
+                remediation=str(_R_RP_ABSENT), grade_cap="A-",
             ))
 
         # --- Permissions-Policy ---
         pp = h.get("permissions-policy") or h.get("feature-policy")
         if not pp:
             result.findings.append(Finding(
-                severity="LOW", category="Cabeceras HTTP",
-                name="Permissions-Policy ausente",
-                detail="Sin control de APIs del navegador (cámara, micrófono, geolocalización, etc.)",
-                remediation=_R_PP_ABSENT, grade_cap="A-",
+                severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                name=str(_T("Permissions-Policy absent", "Permissions-Policy ausente")),
+                detail=str(_T("No browser API control (camera, microphone, geolocation, etc.)", "Sin control de APIs del navegador (cámara, micrófono, geolocalización, etc.)")),
+                remediation=str(_R_PP_ABSENT), grade_cap="A-",
             ))
         else:
             # Parsear directivas y alertar si APIs sensibles no están restringidas
@@ -318,14 +319,14 @@ class HTTPAuditor:
                         sin_restriccion.append(api)
             if sin_restriccion:
                 result.findings.append(Finding(
-                    severity="LOW", category="Cabeceras HTTP",
-                    name="Permissions-Policy: APIs sensibles sin restricción explícita",
+                    severity="LOW", category=str(_T("HTTP Headers", "Cabeceras HTTP")),
+                    name=str(_T("Permissions-Policy: sensitive APIs without explicit restriction", "Permissions-Policy: APIs sensibles sin restricción explícita")),
                     detail=(
                         f"Las siguientes APIs del navegador no están explícitamente restringidas "
                         f"a '()' o '(self)' en Permissions-Policy: {', '.join(sin_restriccion)}. "
                         "Cualquier script en la página podría acceder a ellas."
                     ),
-                    remediation=_R_PP_ABSENT,
+                    remediation=str(_R_PP_ABSENT),
                 ))
 
         # ── Sección: Aislamiento Cross-Origin (COEP / COOP / CORP) ─────────────
@@ -334,71 +335,71 @@ class HTTPAuditor:
         coep = h.get("cross-origin-embedder-policy")
         if not coep:
             result.findings.append(Finding(
-                severity="MEDIUM", category="Aislamiento Cross-Origin",
-                name="COEP ausente",
+                severity="MEDIUM", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
+                name=str(_T("COEP absent", "COEP ausente")),
                 detail=(
                     "Cross-Origin-Embedder-Policy no configurada. "
                     "Sin esta cabecera el navegador no aísla el contexto de navegación, "
                     "impidiendo el uso seguro de SharedArrayBuffer y dificultando "
                     "la mitigación de ataques Spectre cross-origin."
                 ),
-                remediation=_R_COEP_ABSENT, grade_cap="B",
+                remediation=str(_R_COEP_ABSENT), grade_cap="B",
             ))
         elif coep.lower() not in ("require-corp", "credentialless"):
             result.findings.append(Finding(
-                severity="MEDIUM", category="Aislamiento Cross-Origin",
+                severity="MEDIUM", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
                 name=f"COEP con valor no restrictivo: {coep!r}",
                 detail=(
                     f"Cross-Origin-Embedder-Policy está configurada con valor '{coep}', "
                     "que no proporciona aislamiento completo. "
                     "Se recomienda 'require-corp' o 'credentialless'."
                 ),
-                remediation=_R_COEP_ABSENT, grade_cap="B",
+                remediation=str(_R_COEP_ABSENT), grade_cap="B",
             ))
 
         # --- Cross-Origin-Opener-Policy ---
         coop = h.get("cross-origin-opener-policy")
         if not coop:
             result.findings.append(Finding(
-                severity="MEDIUM", category="Aislamiento Cross-Origin",
-                name="COOP ausente",
+                severity="MEDIUM", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
+                name=str(_T("COOP absent", "COOP ausente")),
                 detail=(
                     "Cross-Origin-Opener-Policy no configurada. "
                     "Sin esta cabecera la página comparte grupo de contexto de navegación "
                     "con ventanas de otros orígenes, facilitando ataques Spectre y "
                     "el robo de información mediante canales de tiempo."
                 ),
-                remediation=_R_COOP_ABSENT, grade_cap="B",
+                remediation=str(_R_COOP_ABSENT), grade_cap="B",
             ))
         elif "same-origin" not in coop.lower():
             result.findings.append(Finding(
-                severity="MEDIUM", category="Aislamiento Cross-Origin",
+                severity="MEDIUM", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
                 name=f"COOP con valor no restrictivo: {coop!r}",
                 detail=(
                     f"Cross-Origin-Opener-Policy está configurada con valor '{coop}', "
                     "que no proporciona aislamiento completo del grupo de contexto. "
                     "Se recomienda 'same-origin'."
                 ),
-                remediation=_R_COOP_ABSENT, grade_cap="B",
+                remediation=str(_R_COOP_ABSENT), grade_cap="B",
             ))
 
         # --- Cross-Origin-Resource-Policy ---
         corp = h.get("cross-origin-resource-policy")
         if not corp:
             result.findings.append(Finding(
-                severity="LOW", category="Aislamiento Cross-Origin",
-                name="CORP ausente",
+                severity="LOW", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
+                name=str(_T("CORP absent", "CORP ausente")),
                 detail=(
                     "Cross-Origin-Resource-Policy no configurada. "
                     "Cualquier origen puede incluir estos recursos (imágenes, scripts, etc.) "
                     "en su contexto, facilitando ataques de filtración de datos cross-origin."
                 ),
-                remediation=_R_CORP_ABSENT, grade_cap="A",
+                remediation=str(_R_CORP_ABSENT), grade_cap="A",
             ))
         elif corp.lower() == "cross-origin":
             result.findings.append(Finding(
-                severity="INFO", category="Aislamiento Cross-Origin",
-                name="CORP: cross-origin (recurso público)",
+                severity="INFO", category=str(_T("Cross-Origin Isolation", "Aislamiento Cross-Origin")),
+                name=str(_T("CORP: cross-origin (public resource)", "CORP: cross-origin (recurso público)")),
                 detail="Intencionalmente accesible desde cualquier origen",
             ))
 
@@ -406,10 +407,10 @@ class HTTPAuditor:
         csp = h.get("content-security-policy")
         if not csp:
             result.findings.append(Finding(
-                severity="HIGH", category="CSP",
-                name="Content-Security-Policy ausente",
-                detail="Sin CSP — sin protección contra inyección de scripts (XSS), clickjacking y data theft",
-                remediation=_R_CSP_ABSENT, grade_cap="B",
+                severity="HIGH", category=str(_T("CSP", "CSP")),
+                name=str(_T("Content-Security-Policy absent", "Content-Security-Policy ausente")),
+                detail=str(_T("No CSP — no protection against script injection (XSS), clickjacking or data theft", "Sin CSP — sin protección contra inyección de scripts (XSS), clickjacking y data theft")),
+                remediation=str(_R_CSP_ABSENT), grade_cap="B",
             ))
 
     # --------------------------------------------------------- Fase 2: análisis CSP
@@ -440,26 +441,26 @@ class HTTPAuditor:
         # unsafe-inline
         if "'unsafe-inline'" in script_src:
             result.findings.append(Finding(
-                severity="HIGH", category="CSP",
-                name="CSP: 'unsafe-inline' en script-src",
-                detail="Permite ejecución de scripts inline — anula la protección XSS de CSP",
-                remediation=_R_CSP_UNSAFE_INLINE, grade_cap="A-",
+                severity="HIGH", category=str(_T("CSP", "CSP")),
+                name=str(_T("CSP: 'unsafe-inline' in script-src", "CSP: 'unsafe-inline' en script-src")),
+                detail=str(_T("Allows inline script execution — disables CSP XSS protection", "Permite ejecución de scripts inline — anula la protección XSS de CSP")),
+                remediation=str(_R_CSP_UNSAFE_INLINE), grade_cap="A-",
             ))
         if "'unsafe-inline'" in style_src:
             result.findings.append(Finding(
-                severity="MEDIUM", category="CSP",
-                name="CSP: 'unsafe-inline' en style-src",
+                severity="MEDIUM", category=str(_T("CSP", "CSP")),
+                name=str(_T("CSP: 'unsafe-inline' in style-src", "CSP: 'unsafe-inline' en style-src")),
                 detail="Permite estilos inline — permite CSS injection",
-                remediation=_R_CSP_UNSAFE_INLINE, grade_cap="A-",
+                remediation=str(_R_CSP_UNSAFE_INLINE), grade_cap="A-",
             ))
 
         # unsafe-eval
         if "'unsafe-eval'" in script_src:
             result.findings.append(Finding(
-                severity="HIGH", category="CSP",
-                name="CSP: 'unsafe-eval' en script-src",
-                detail="Permite eval() y funciones equivalentes — permite ejecución de código arbitrario",
-                remediation=_R_CSP_UNSAFE_EVAL, grade_cap="A-",
+                severity="HIGH", category=str(_T("CSP", "CSP")),
+                name=str(_T("CSP: 'unsafe-eval' in script-src", "CSP: 'unsafe-eval' en script-src")),
+                detail=str(_T("Allows eval() and equivalent functions — enables arbitrary code execution", "Permite eval() y funciones equivalentes — permite ejecución de código arbitrario")),
+                remediation=str(_R_CSP_UNSAFE_EVAL), grade_cap="A-",
             ))
 
         # Wildcard en fuentes
@@ -468,10 +469,10 @@ class HTTPAuditor:
                 continue
             if "*" in dvals or "http://*" in dvals or "https://*" in dvals:
                 result.findings.append(Finding(
-                    severity="MEDIUM", category="CSP",
-                    name=f"CSP: comodín (*) en {dname}",
+                    severity="MEDIUM", category=str(_T("CSP", "CSP")),
+                    name=str(_T(f"CSP: wildcard (*) in {dname}", f"CSP: comodín (*) en {dname}")),
                     detail=f"La directiva '{dname}' permite cargar recursos desde cualquier dominio",
-                    remediation=_R_CSP_WILDCARD, grade_cap="A-",
+                    remediation=str(_R_CSP_WILDCARD), grade_cap="A-",
                 ))
 
         # frame-ancestors ausente (X-Frame-Options ya puede cubrirlo)
@@ -480,20 +481,20 @@ class HTTPAuditor:
             if not xfo:
                 # Ya existe el hallazgo de XFO ausente — este es complementario
                 result.findings.append(Finding(
-                    severity="INFO", category="CSP",
-                    name="CSP: directiva frame-ancestors ausente",
-                    detail="Sin frame-ancestors en CSP ni X-Frame-Options — clickjacking posible vía iframe",
-                    remediation=_R_CSP_NO_FRAME_ANCESTORS,
+                    severity="INFO", category=str(_T("CSP", "CSP")),
+                    name=str(_T("CSP: frame-ancestors directive absent", "CSP: directiva frame-ancestors ausente")),
+                    detail=str(_T("No frame-ancestors in CSP or X-Frame-Options — clickjacking possible via iframe", "Sin frame-ancestors en CSP ni X-Frame-Options — clickjacking posible vía iframe")),
+                    remediation=str(_R_CSP_NO_FRAME_ANCESTORS),
                 ))
 
         # Modo report-only (no aplicado)
         csp_ro = result.headers.get("content-security-policy-report-only")
         if csp_ro and not csp:
             result.findings.append(Finding(
-                severity="MEDIUM", category="CSP",
-                name="CSP en modo Report-Only (no aplicado)",
-                detail="Content-Security-Policy-Report-Only no bloquea nada — es solo monitorización",
-                remediation=_R_CSP_ABSENT, grade_cap="B",
+                severity="MEDIUM", category=str(_T("CSP", "CSP")),
+                name=str(_T("CSP in Report-Only mode (not enforced)", "CSP en modo Report-Only (no aplicado)")),
+                detail=str(_T("Content-Security-Policy-Report-Only blocks nothing — monitoring only", "Content-Security-Policy-Report-Only no bloquea nada — es solo monitorización")),
+                remediation=str(_R_CSP_ABSENT), grade_cap="B",
             ))
 
     # --------------------------------------------------------- Fase 3: CORS
@@ -530,18 +531,18 @@ class HTTPAuditor:
                 result.cors_origin_reflected = True
                 result.cors_credentials      = True
                 result.findings.append(Finding(
-                    severity="CRITICAL", category="CORS",
-                    name="CORS: wildcard (*) + credenciales",
+                    severity="CRITICAL", category=str(_T("CORS", "CORS")),
+                    name=str(_T("CORS: wildcard (*) + credentials", "CORS: wildcard (*) + credenciales")),
                     detail="Access-Control-Allow-Origin: * con Access-Control-Allow-Credentials: true — "
                            "permite robo de sesión cross-origin",
-                    remediation=_R_CORS_WILDCARD_CREDS, grade_cap="F",
+                    remediation=str(_R_CORS_WILDCARD_CREDS), grade_cap="F",
                 ))
             elif acao == "*":
                 result.findings.append(Finding(
-                    severity="MEDIUM", category="CORS",
-                    name="CORS: wildcard (*) sin credenciales",
-                    detail="Cualquier origen puede leer las respuestas — evaluar si es intencional (API pública)",
-                    remediation=_R_CORS_WILDCARD, grade_cap="B",
+                    severity="MEDIUM", category=str(_T("CORS", "CORS")),
+                    name=str(_T("CORS: wildcard (*) without credentials", "CORS: wildcard (*) sin credenciales")),
+                    detail=str(_T("Any origin can read responses — assess if intentional (public API)", "Cualquier origen puede leer las respuestas — evaluar si es intencional (API pública)")),
+                    remediation=str(_R_CORS_WILDCARD), grade_cap="B",
                 ))
             elif acao == origin and origin != "null":
                 # Reflejo del origin del atacante
@@ -552,7 +553,7 @@ class HTTPAuditor:
                 cap  = "F" if acac else "B"
                 remed = _R_CORS_REFLECT
                 result.findings.append(Finding(
-                    severity=sev, category="CORS",
+                    severity=sev, category=str(_T("CORS", "CORS")),
                     name="CORS: reflejo del origen del atacante" + (" + credenciales" if acac else ""),
                     detail=(
                         f"El servidor refleja el origen {origin!r} en ACAO"
@@ -563,10 +564,10 @@ class HTTPAuditor:
             elif acao == "null" and origin == "null":
                 result.cors_null_accepted = True
                 result.findings.append(Finding(
-                    severity="HIGH", category="CORS",
+                    severity="HIGH", category=str(_T("CORS", "CORS")),
                     name="CORS: acepta origen 'null'",
                     detail="El origen 'null' es generado por iframes sandbox — bypass de restricciones de origen",
-                    remediation=_R_CORS_NULL, grade_cap="B",
+                    remediation=str(_R_CORS_NULL), grade_cap="B",
                 ))
 
     # --------------------------------------------------------- Fase 4: cookies
@@ -627,37 +628,37 @@ class HTTPAuditor:
             if not secure:
                 result.findings.append(Finding(
                     severity="HIGH" if is_session_like else "MEDIUM",
-                    category="Cookies",
+                    category=str(_T("Cookies", "Cookies")),
                     name=f"Cookie sin Secure: {name}",
-                    detail=f"La cookie '{name}' se transmite también por HTTP",
-                    remediation=_R_COOKIE_NOSECURE,
+                    detail=str(_T(f"Cookie '{name}' is also transmitted over HTTP", f"La cookie '{name}' se transmite también por HTTP")),
+                    remediation=str(_R_COOKIE_NOSECURE),
                     grade_cap="B",
                 ))
             if not httponly:
                 result.findings.append(Finding(
                     severity="HIGH" if is_session_like else "MEDIUM",
-                    category="Cookies",
+                    category=str(_T("Cookies", "Cookies")),
                     name=f"Cookie sin HttpOnly: {name}",
                     detail=f"La cookie '{name}' es accesible desde JavaScript (riesgo XSS)",
-                    remediation=_R_COOKIE_NOHTTPONLY,
+                    remediation=str(_R_COOKIE_NOHTTPONLY),
                     grade_cap="B",
                 ))
             if samesite is None:
                 result.findings.append(Finding(
                     severity="LOW",
-                    category="Cookies",
+                    category=str(_T("Cookies", "Cookies")),
                     name=f"Cookie sin SameSite: {name}",
-                    detail=f"La cookie '{name}' se envía en peticiones cross-site (riesgo CSRF)",
-                    remediation=_R_COOKIE_NOSAMESITE,
+                    detail=str(_T(f"Cookie '{name}' is sent on cross-site requests (CSRF risk)", f"La cookie '{name}' se envía en peticiones cross-site (riesgo CSRF)")),
+                    remediation=str(_R_COOKIE_NOSAMESITE),
                     grade_cap="A",
                 ))
             elif samesite.lower() == "none" and not secure:
                 result.findings.append(Finding(
                     severity="HIGH",
-                    category="Cookies",
+                    category=str(_T("Cookies", "Cookies")),
                     name=f"Cookie SameSite=None sin Secure: {name}",
                     detail="SameSite=None requiere el flag Secure — los navegadores rechazan la cookie",
-                    remediation=_R_COOKIE_NOSECURE,
+                    remediation=str(_R_COOKIE_NOSECURE),
                     grade_cap="B",
                 ))
 
@@ -828,8 +829,8 @@ class HTTPAuditor:
         )
         return Finding(
             severity="MEDIUM",
-            category="Vulnerabilidad PHP",
-            name=f"PHP detectado — versión oculta ({senal})",
+            category=str(_T("PHP Vulnerability", "Vulnerabilidad PHP")),
+            name=str(_T(f"PHP detected — version hidden ({senal})", f"PHP detectado — versión oculta ({senal})")),
             detail=(
                 f"PHP detectado a través de: {senal}. "
                 "La versión exacta no está expuesta en cabeceras HTTP. "
@@ -988,8 +989,8 @@ class HTTPAuditor:
             cve_str = ", ".join(cves_aplicables)
             result.findings.append(Finding(
                 severity="CRITICAL",
-                category="Vulnerabilidad PHP",
-                name=f"PHP/{version} — versión vulnerable ({cve_str})",
+                category=str(_T("PHP Vulnerability", "Vulnerabilidad PHP")),
+                name=str(_T(f"PHP/{version} — vulnerable version ({cve_str})", f"PHP/{version} — versión vulnerable ({cve_str})")),
                 detail=(
                     f"La versión PHP/{version} detectada en {result.url} está afectada por {cve_str}. "
                     f"CVE-2026-109618 (php2shell): PHP usa longjmp() para errores OOM dejando memoria "
@@ -1023,20 +1024,20 @@ class HTTPAuditor:
             version_pattern = re.search(r"[\d\.]{3,}", server)
             if version_pattern or "/" in server:
                 result.findings.append(Finding(
-                    severity="MEDIUM", category="Información",
-                    name=f"Server: revela versión — {server}",
-                    detail=f"Expone el software y versión del servidor: {server!r}",
-                    remediation=_R_SERVER_VERSION, grade_cap="B",
+                    severity="MEDIUM", category=str(_T("Information", "Información")),
+                    name=str(_T(f"Server: reveals version — {server}", f"Server: revela versión — {server}")),
+                    detail=str(_T(f"Exposes server software and version: {server!r}", f"Expone el software y versión del servidor: {server!r}")),
+                    remediation=str(_R_SERVER_VERSION), grade_cap="B",
                 ))
 
         # X-Powered-By
         xpb = h.get("x-powered-by", "")
         if xpb:
             result.findings.append(Finding(
-                severity="LOW", category="Información",
-                name=f"X-Powered-By: revela tecnología — {xpb}",
-                detail=f"Expone la tecnología del backend: {xpb!r}",
-                remediation=_R_XPOWEREDBY, grade_cap="B",
+                severity="LOW", category=str(_T("Information", "Información")),
+                name=str(_T(f"X-Powered-By: reveals technology — {xpb}", f"X-Powered-By: revela tecnología — {xpb}")),
+                detail=str(_T(f"Exposes backend technology: {xpb!r}", f"Expone la tecnología del backend: {xpb!r}")),
+                remediation=str(_R_XPOWEREDBY), grade_cap="B",
             ))
 
         # Cabeceras de versión de frameworks
@@ -1044,20 +1045,20 @@ class HTTPAuditor:
             val = h.get(h_name)
             if val:
                 result.findings.append(Finding(
-                    severity="LOW", category="Información",
+                    severity="LOW", category=str(_T("Information", "Información")),
                     name=f"{h_name}: {val}",
                     detail=f"La cabecera {h_name!r} revela detalles del CMS/framework",
-                    remediation=_R_SERVER_VERSION,
+                    remediation=str(_R_SERVER_VERSION),
                 ))
 
         # Cabeceras de debug
         for h_name, h_val in h.items():
             if h_name.startswith(("x-debug", "x-sf-")) or "debug" in h_name:
                 result.findings.append(Finding(
-                    severity="MEDIUM", category="Información",
+                    severity="MEDIUM", category=str(_T("Information", "Información")),
                     name=f"Cabecera de debug expuesta: {h_name}: {h_val[:80]}",
-                    detail="Cabeceras de depuración activas en producción — puede revelar rutas y tokens internos",
-                    remediation=_R_DEBUG_HEADER, grade_cap="A-",
+                    detail=str(_T("Debug headers active in production — may reveal internal paths and tokens", "Cabeceras de depuración activas en producción — puede revelar rutas y tokens internos")),
+                    remediation=str(_R_DEBUG_HEADER), grade_cap="A-",
                 ))
                 break  # Una sola notificación por fase
 
@@ -1093,13 +1094,13 @@ class HTTPAuditor:
         if vulnerable_params:
             result.open_redirect_params = vulnerable_params
             result.findings.append(Finding(
-                severity="CRITICAL", category="Open Redirect",
-                name=f"Open redirect confirmado: parámetros {', '.join(vulnerable_params)}",
+                severity="CRITICAL", category=str(_T("Open Redirect", "Open Redirect")),
+                name=str(_T(f"Open redirect confirmed: parameters {', '.join(vulnerable_params)}", f"Open redirect confirmado: parámetros {', '.join(vulnerable_params)}")),
                 detail=(
                     f"Los parámetros {vulnerable_params} redirigen a URLs externas sin validación — "
                     "permite phishing y bypass de seguridad"
                 ),
-                remediation=_R_OPEN_REDIRECT, grade_cap="F",
+                remediation=str(_R_OPEN_REDIRECT), grade_cap="F",
             ))
 
     # --------------------------------------------------------- Pruebas activas (--active)
@@ -1145,7 +1146,7 @@ class HTTPAuditor:
                         responses[delta] = len(body)
                     elif status in (403, 404):
                         result.findings.append(Finding(
-                            severity="INFO", category="Pruebas Activas",
+                            severity="INFO", category=str(_T("Active Tests", "Pruebas Activas")),
                             name=f"IDOR: control de acceso activo para '{param_name}'",
                             detail=(
                                 f"ID adyacente {new_id} devolvió HTTP {status} "
@@ -1162,8 +1163,8 @@ class HTTPAuditor:
                     ratio = max(size_a, size_b) / max(min(size_a, size_b), 1)
                     if ratio <= 1.25:
                         result.findings.append(Finding(
-                            severity="MEDIUM", category="Pruebas Activas",
-                            name=f"Posible IDOR — parámetro '{param_name}'",
+                            severity="MEDIUM", category=str(_T("Active Tests", "Pruebas Activas")),
+                            name=str(_T(f"Possible IDOR — parameter '{param_name}'", f"Posible IDOR — parámetro '{param_name}'")),
                             detail=(
                                 f"Los IDs adyacentes ({id_val - 1} y {id_val + 1}) devuelven "
                                 f"HTTP 200 con tamaños similares ({size_a} y {size_b} bytes, "
@@ -1196,7 +1197,7 @@ class HTTPAuditor:
 
             if evil_host in body_str or evil_host in location:
                 result.findings.append(Finding(
-                    severity="HIGH", category="Pruebas Activas",
+                    severity="HIGH", category=str(_T("Active Tests", "Pruebas Activas")),
                     name="Host Header Injection — respuesta refleja el header Host manipulado",
                     detail=(
                         f"El servidor refleja el valor de la cabecera Host manipulada "
@@ -1214,7 +1215,7 @@ class HTTPAuditor:
                 ))
             elif status in (400, 421):
                 result.findings.append(Finding(
-                    severity="INFO", category="Pruebas Activas",
+                    severity="INFO", category=str(_T("Active Tests", "Pruebas Activas")),
                     name="Host Header: servidor rechaza Host manipulado",
                     detail=(
                         f"El servidor devolvió HTTP {status} ante una cabecera Host inválida "
@@ -1290,7 +1291,7 @@ class HTTPAuditor:
                     sev = "HIGH" if not result.php_vulnerable else "HIGH"
                     result.findings.append(Finding(
                         severity=sev,
-                        category="Vulnerabilidad PHP",
+                        category=str(_T("PHP Vulnerability", "Vulnerabilidad PHP")),
                         name=f"phpinfo() expuesto en {path}",
                         detail=(
                             f"La ruta {url_probe} devuelve phpinfo() completo (PHP {version}). "
@@ -1308,7 +1309,7 @@ class HTTPAuditor:
                     result.php_version = result.php_version or "detectado (phpinfo expuesto)"
                     result.findings.append(Finding(
                         severity="HIGH",
-                        category="Vulnerabilidad PHP",
+                        category=str(_T("PHP Vulnerability", "Vulnerabilidad PHP")),
                         name=f"phpinfo() expuesto en {path}",
                         detail=(
                             f"La ruta {url_probe} devuelve phpinfo() pero la versión no se pudo extraer. "
@@ -1353,7 +1354,7 @@ class HTTPAuditor:
 
                 result.findings.append(Finding(
                     severity="HIGH",
-                    category="Divulgación de información",
+                    category=str(_T("Information Disclosure", "Divulgación de información")),
                     name=f"composer.lock expuesto ({path})",
                     detail=(
                         f"El fichero composer.lock es público en {url_probe}. "
@@ -1445,7 +1446,7 @@ class HTTPAuditor:
                 )
                 result.findings.append(Finding(
                     severity="CRITICAL",
-                    category="Divulgación de información",
+                    category=str(_T("Information Disclosure", "Divulgación de información")),
                     name=f"Fichero .env expuesto ({path})",
                     detail=(
                         f"El fichero {path} es accesible públicamente en {url_probe}. "
@@ -1494,7 +1495,7 @@ class HTTPAuditor:
                 if kind == "ping" and body_text.strip().lower() == "pong":
                     result.findings.append(Finding(
                         severity="MEDIUM",
-                        category="Divulgación de información",
+                        category=str(_T("Information Disclosure", "Divulgación de información")),
                         name=f"PHP-FPM ping expuesto ({path})",
                         detail=(
                             f"El endpoint de ping de PHP-FPM responde en {url_probe}. "
@@ -1525,7 +1526,7 @@ class HTTPAuditor:
                         self._evaluar_php_cves(result, version)
                     result.findings.append(Finding(
                         severity="HIGH",
-                        category="Divulgación de información",
+                        category=str(_T("Information Disclosure", "Divulgación de información")),
                         name=f"PHP-FPM status expuesto ({path})",
                         detail=(
                             f"El endpoint de estado de PHP-FPM es público en {url_probe}. "
@@ -1611,7 +1612,7 @@ class HTTPAuditor:
                 sev = "CRITICAL" if "debug" in path or "telescope" in path else "HIGH"
                 result.findings.append(Finding(
                     severity=sev,
-                    category="Divulgación de información",
+                    category=str(_T("Information Disclosure", "Divulgación de información")),
                     name=f"Panel de debug {framework} expuesto ({path})",
                     detail=(
                         f"El panel de depuración de {framework} es accesible en {url_probe}. "
@@ -1664,7 +1665,7 @@ class HTTPAuditor:
 
                 result.findings.append(Finding(
                     severity="MEDIUM",
-                    category="Divulgación de información",
+                    category=str(_T("Information Disclosure", "Divulgación de información")),
                     name=f"wp-includes/version.php accesible — WordPress {wp_version}",
                     detail=(
                         f"La ruta {url_probe} expone la versión exacta de WordPress ({wp_version}). "
@@ -1790,13 +1791,13 @@ class HTTPAuditor:
                     location = hdrs.get("location", "")
                     if evil_url in location or "evil.example.com" in location:
                         result.findings.append(Finding(
-                            severity="HIGH", category="Pruebas Activas",
-                            name=f"Open Redirect confirmado — parámetro '{param}'",
+                            severity="HIGH", category=str(_T("Active Tests", "Pruebas Activas")),
+                            name=str(_T(f"Open Redirect confirmed — parameter '{param}'", f"Open Redirect confirmado — parámetro '{param}'")),
                             detail=(
                                 f"El parámetro '{param}' redirige a una URL externa sin validación. "
                                 f"Location devuelto: {location[:120]}"
                             ),
-                            remediation=_R_OPEN_REDIRECT,
+                            remediation=str(_R_OPEN_REDIRECT),
                             grade_cap="F",
                         ))
                         break  # Un Open Redirect confirmado es suficiente
@@ -1867,19 +1868,19 @@ class HTTPAuditor:
 
         if introspection_on:
             result.findings.append(Finding(
-                severity="HIGH", category="GraphQL",
-                name=f"Introspección GraphQL habilitada: {', '.join(introspection_on)}",
+                severity="HIGH", category=str(_T("GraphQL", "GraphQL")),
+                name=str(_T(f"GraphQL introspection enabled: {', '.join(introspection_on)}", f"Introspección GraphQL habilitada: {', '.join(introspection_on)}")),
                 detail=(
                     f"Los endpoints {introspection_on} responden a consultas de introspección "
                     "y exponen el schema completo de la API (tipos, campos, mutaciones). "
                     "Un atacante puede mapear la superficie de ataque de la API sin autenticación."
                 ),
-                remediation=_R_GRAPHQL_INTROSPECTION, grade_cap="B",
+                remediation=str(_R_GRAPHQL_INTROSPECTION), grade_cap="B",
             ))
         elif endpoint_found:
             result.findings.append(Finding(
-                severity="MEDIUM", category="GraphQL",
-                name=f"Endpoint GraphQL detectado sin introspección: {', '.join(endpoint_found)}",
+                severity="MEDIUM", category=str(_T("GraphQL", "GraphQL")),
+                name=str(_T(f"GraphQL endpoint detected without introspection: {', '.join(endpoint_found)}", f"Endpoint GraphQL detectado sin introspección: {', '.join(endpoint_found)}")),
                 detail=(
                     f"Se detectó presencia de GraphQL en {endpoint_found} "
                     "pero la introspección está deshabilitada (configuración correcta). "
