@@ -247,7 +247,7 @@ vamp-http-audit --file urls.txt \
 ### Sample Output
 
 ```text
-vamp-http-audit v1.6.0 · 2 targets
+vamp-http-audit v1.7.0 · 2 targets
 ─────────────────────────────────────────────────────────────────────────
 Target: https://example.com
   Grade: C
@@ -350,6 +350,7 @@ Use exclusively on systems you own or for which you hold explicit written author
 
 | Version | Main changes |
 |---------|-------------|
+| v1.7.0 | Bilingual `--help` menu: `_detect_lang()` pre-parser detects `--lang` / `LANG` env var |
 | v1.6.0 | Bilingual EN/ES output via `--lang en|es` |
 | v1.5.1 | Active PHP probing v2: `composer.lock` exposure (exact PHP version + dep tree), `.env` exposure (CRITICAL finding + `PHP_VERSION=` extraction), PHP-FPM status/ping, WordPress `version.php` correlation, framework debug panels (Laravel Ignition/Telescope, Symfony Profiler/WDT), PHP 7 vs 8 error fingerprinting; `_evaluar_php_cves` deduplicated (idempotent) |
 | v1.5.0 | PHP detection engine v2: 6-layer passive (URL extension, 30+ framework cookies, CMS headers, `X-Generator`, `<meta generator>`, body signatures) + active phpinfo() probing and CMS path confirmation (`--active`); `_evaluar_php_cves` extracted for reuse; `--active` PHP probing triggers `_probe_php_active` |
@@ -648,6 +649,7 @@ Uso exclusivo en sistemas de tu propiedad o para los que dispongas de autorizaci
 
 | Versión | Cambios principales |
 |---------|---------------------|
+| v1.7.0 | Menú `--help` bilingüe: `_detect_lang()` detecta `--lang` / variable `LANG` antes del parser |
 | v1.6.0 | Salida bilingüe EN/ES mediante `--lang en|es` |
 | v1.5.1 | Sondeo activo PHP v2: `composer.lock` expuesto (versión PHP exacta + árbol de deps), `.env` expuesto (hallazgo CRITICAL + extracción `PHP_VERSION=`), PHP-FPM status/ping, WordPress `version.php`, paneles debug de frameworks (Laravel Ignition/Telescope, Symfony Profiler/WDT), fingerprinting PHP 7 vs 8 por formato de error; `_evaluar_php_cves` idempotente (sin duplicados) |
 | v1.5.0 | Motor de detección PHP v2: 6 capas pasivas (extensión URL, 30+ cookies de framework, cabeceras CMS, `X-Generator`, `<meta generator>`, firmas body) + sondeo activo phpinfo() y confirmación por rutas CMS (`--active`); `_evaluar_php_cves` extraído como método independiente |
