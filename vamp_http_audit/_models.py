@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-VERSION   = "1.6.0"
+VERSION   = "1.7.0"
 TOOL_NAME = "vamp-http-audit"
 
 LANG: str = "en"  # overridden by CLI: _models.LANG = args.lang

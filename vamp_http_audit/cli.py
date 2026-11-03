@@ -209,54 +209,105 @@ class Reporter:
 # CLI — parsing de argumentos y función principal
 # ---------------------------------------------------------------------------
 
+def _detect_lang() -> str:
+    """Detect output language before full CLI parse.
+
+    Priority: --lang in sys.argv > LANG/LANGUAGE env var > 'en'.
+    """
+    import os as _os
+    argv = sys.argv[1:]
+    for i, arg in enumerate(argv):
+        if arg == "--lang" and i + 1 < len(argv):
+            v = argv[i + 1]
+            return v if v in ("en", "es") else "en"
+        if arg.startswith("--lang="):
+            v = arg.split("=", 1)[1]
+            return v if v in ("en", "es") else "en"
+    for var in ("LANG", "LANGUAGE"):
+        val = _os.environ.get(var, "")
+        if val.lower().startswith("es"):
+            return "es"
+    return "en"
+
+
 def _parse_args() -> argparse.Namespace:
+    import vamp_http_audit._models as _models_mod
+    _models_mod.LANG = _detect_lang()
+
     p = argparse.ArgumentParser(
         prog=TOOL_NAME,
-        description=f"VampSecure Labs HTTP Audit v{VERSION} — Auditor de seguridad HTTP con calificación A+→F",
+        description=str(_T(
+            f"VampSecure Labs HTTP Audit v{VERSION} — HTTP security auditor with A+→F grading",
+            f"VampSecure Labs HTTP Audit v{VERSION} — Auditor de seguridad HTTP con calificación A+→F",
+        )),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Ejemplos:
-  vamp-http-audit -u https://ejemplo.com
-  vamp-http-audit -u https://ejemplo.com -u https://api.ejemplo.com/v2/
-  vamp-http-audit --file urls.txt --html informe.html --markdown informe.md
-  vamp-http-audit -u https://ejemplo.com --json salida.json --csv resultados.csv
-  vamp-http-audit --network 192.168.1.0/24 --json red_interna.json
-  vamp-http-audit --network 10.0.0.0/16 --network 172.16.0.0/24 --php-only --json php_vuln.json
-  vamp-http-audit --network 192.168.0.0/24 --scan-ports 80,443,8080 --scan-timeout 2.0
-        """,
+        epilog=str(_T(
+            "Examples:\n"
+            "  vamp-http-audit -u https://example.com\n"
+            "  vamp-http-audit -u https://example.com -u https://api.example.com/v2/\n"
+            "  vamp-http-audit --file urls.txt --html report.html --markdown report.md\n"
+            "  vamp-http-audit -u https://example.com --json out.json --csv results.csv\n"
+            "  vamp-http-audit --network 192.168.1.0/24 --json internal.json\n"
+            "  vamp-http-audit --network 10.0.0.0/16 --php-only --json php_vuln.json\n"
+            "  vamp-http-audit --network 192.168.0.0/24 --scan-ports 80,443,8080 --scan-timeout 2.0",
+            "Ejemplos:\n"
+            "  vamp-http-audit -u https://ejemplo.com\n"
+            "  vamp-http-audit -u https://ejemplo.com -u https://api.ejemplo.com/v2/\n"
+            "  vamp-http-audit --file urls.txt --html informe.html --markdown informe.md\n"
+            "  vamp-http-audit -u https://ejemplo.com --json salida.json --csv resultados.csv\n"
+            "  vamp-http-audit --network 192.168.1.0/24 --json red_interna.json\n"
+            "  vamp-http-audit --network 10.0.0.0/16 --php-only --json php_vuln.json\n"
+            "  vamp-http-audit --network 192.168.0.0/24 --scan-ports 80,443,8080 --scan-timeout 2.0",
+        )),
     )
     p.add_argument("-u", "--url", dest="urls", metavar="URL",
                    action="append", default=[],
-                   help="URL a auditar (se puede repetir)")
+                   help=str(_T("URL to audit (repeatable)", "URL a auditar (se puede repetir)")))
     p.add_argument("--network", dest="networks", metavar="CIDR",
                    action="append", default=[],
-                   help="Rango CIDR a descubrir y auditar (ej. 192.168.1.0/24, se puede repetir)")
+                   help=str(_T("CIDR range to discover and audit (e.g. 192.168.1.0/24, repeatable)",
+                               "Rango CIDR a descubrir y auditar (ej. 192.168.1.0/24, se puede repetir)")))
     p.add_argument("--scan-ports", metavar="PORTS",
-                   help="Puertos TCP a probar en --network (coma: 80,443,8080). Default: puertos web comunes")
-    p.add_argument("--scan-timeout", type=float, default=1.5, metavar="SEG",
-                   help="Timeout TCP por host en el escaneo de red (default: 1.5 s)")
+                   help=str(_T("TCP ports to probe in --network (comma: 80,443,8080). Default: common web ports",
+                               "Puertos TCP a probar en --network (coma: 80,443,8080). Default: puertos web comunes")))
+    p.add_argument("--scan-timeout", type=float, default=1.5, metavar="SEC",
+                   help=str(_T("TCP timeout per host in network scan (default: 1.5 s)",
+                               "Timeout TCP por host en el escaneo de red (default: 1.5 s)")))
     p.add_argument("--scan-concurrency", type=int, default=200, metavar="N",
-                   help="Conexiones TCP simultáneas en el escaneo de red (default: 200)")
+                   help=str(_T("Concurrent TCP connections in network scan (default: 200)",
+                               "Conexiones TCP simultáneas en el escaneo de red (default: 200)")))
     p.add_argument("--file", metavar="FILE",
-                   help="Fichero con URLs, una por línea")
+                   help=str(_T("File with URLs, one per line", "Fichero con URLs, una por línea")))
     p.add_argument("--timeout", type=int, default=10,
-                   help="Timeout de conexión en segundos (default: 10)")
+                   help=str(_T("Connection timeout in seconds (default: 10)",
+                               "Timeout de conexión en segundos (default: 10)")))
     p.add_argument("--workers", type=int, default=5,
-                   help="Hilos paralelos para múltiples URLs (default: 5)")
-    p.add_argument("--json",     metavar="FILE", help="Exportar JSON")
-    p.add_argument("--html",     metavar="FILE", help="Exportar HTML dark-theme")
-    p.add_argument("--markdown", metavar="FILE", help="Exportar Markdown")
-    p.add_argument("--csv",      metavar="FILE", help="Exportar CSV (+ FILE.findings)")
+                   help=str(_T("Parallel threads for multiple URLs (default: 5)",
+                               "Hilos paralelos para múltiples URLs (default: 5)")))
+    p.add_argument("--json",     metavar="FILE",
+                   help=str(_T("Export to JSON", "Exportar JSON")))
+    p.add_argument("--html",     metavar="FILE",
+                   help=str(_T("Export to HTML dark-theme", "Exportar HTML dark-theme")))
+    p.add_argument("--markdown", metavar="FILE",
+                   help=str(_T("Export to Markdown", "Exportar Markdown")))
+    p.add_argument("--csv",      metavar="FILE",
+                   help=str(_T("Export to CSV (+ FILE.findings)", "Exportar CSV (+ FILE.findings)")))
     p.add_argument("--no-verify-ssl", dest="no_verify_ssl", action="store_true",
-                   help="No verificar certificado TLS al hacer peticiones (útil para endpoints internos)")
+                   help=str(_T("Skip TLS certificate verification (useful for internal endpoints)",
+                               "No verificar certificado TLS al hacer peticiones (útil para endpoints internos)")))
     p.add_argument("--active", action="store_true",
-                   help=(
+                   help=str(_T(
+                       "Enable active probes (IDOR, Host Header Injection, Open Redirect). "
+                       "Use only on authorized targets — may generate extra requests.",
                        "Activar pruebas activas (IDOR, Host Header Injection, Open Redirect). "
-                       "Solo usar en entornos autorizados — pueden generar peticiones adicionales."
-                   ))
+                       "Solo usar en entornos autorizados — pueden generar peticiones adicionales.",
+                   )))
     p.add_argument("--php-only", action="store_true",
-                   help="Mostrar en consola solo los hosts con PHP vulnerable (útil con --network)")
+                   help=str(_T("Show only hosts with vulnerable PHP (useful with --network)",
+                               "Mostrar en consola solo los hosts con PHP vulnerable (útil con --network)")))
     p.add_argument("--lang", choices=["en", "es"], default="en",
-                   help="Output language / Idioma de salida (default: en)")
+                   help="Output language / Idioma de salida (default: en). "
+                        "Auto-detected from LANG/LANGUAGE env if not set.")
     from vampsec_report import add_report_args
     add_report_args(p)
     return p.parse_args()
